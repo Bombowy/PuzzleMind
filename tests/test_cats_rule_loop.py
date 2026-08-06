@@ -119,13 +119,25 @@ def _simple_board() -> Board:
     return _board_from_values((("C0", "C1"), ("C2", "C3")))
 
 
-def test_default_rule_order_is_single_pair_then_confined_line() -> None:
+def test_default_rule_order_contains_all_five_cats_rules() -> None:
     """Keep the explicit Cats priority independent from import or registry order."""
 
     assert tuple(type(rule).__name__ for rule in DEFAULT_CATS_RULES) == (
         "SingleRemainingColorCellRule",
+        "SingleRemainingLineCellRule",
+        "MonochromaticLineColorExclusionRule",
         "AdjacentColorPairExclusionRule",
         "ColorConfinedToLineRule",
+    )
+
+
+def test_single_remaining_line_precedes_monochromatic_exclusion() -> None:
+    """Place a forced line cat before making the weaker color exclusion."""
+
+    rule_names = tuple(type(rule).__name__ for rule in DEFAULT_CATS_RULES)
+
+    assert rule_names.index("SingleRemainingLineCellRule") < rule_names.index(
+        "MonochromaticLineColorExclusionRule"
     )
 
 
@@ -340,3 +352,26 @@ def test_real_rules_restart_singleton_after_adjacent_pair_exclusion() -> None:
         "X",
         "X",
     )
+
+
+def test_real_rules_place_single_remaining_line_cell_before_weaker_rules() -> None:
+    """Let the second rule immediately place the sole possibility in row zero."""
+
+    board = _board_from_values(
+        (
+            ("X", "X", "C0", "X"),
+            ("C1", "C2", "C3", "C0"),
+            ("C1", "C2", "C3", "C4"),
+            ("C4", "C5", "C5", "C0"),
+        )
+    )
+
+    successful_applications = apply_cats_rules_until_stalled(board)
+
+    assert successful_applications >= 1
+    assert board.get(0, 2) == "K"
+    assert tuple(board.get(row, column) for row, column in ((1, 3), (3, 3))) == (
+        "X",
+        "X",
+    )
+    assert tuple(board.get(row, 2) for row in range(1, 4)) == ("X", "X", "X")

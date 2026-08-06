@@ -37,12 +37,18 @@ API reaches stability.
   neighbors, plus a non-propagating idempotent `block_cell` action.
 - Stateless `SingleRemainingColorCellRule` using numeric color ordering and at
   most one atomic `place_cat` action per `apply()` call.
+- Stateless `SingleRemainingLineCellRule` placing a cat when a row or column has
+  exactly one unresolved cell and every other cell in that line is blocked.
 - Stateless `ColorConfinedToLineRule` with atomic row/column exclusion planning,
   numeric color ordering, and `block_cell`-only mutations.
+- Stateless `MonochromaticLineColorExclusionRule` for excluding a line's sole
+  remaining color everywhere outside that row or column.
 - Stateless `AdjacentColorPairExclusionRule` for atomic perpendicular exclusions
   around exactly two orthogonally adjacent candidates of one color.
 - Minimal `apply_cats_rules_until_stalled` fixed-point loop that restarts the
   ordered Cats rules after every successful application.
+- Manual `solve_bluestacks_cats.py` capture-to-deduction script with aligned board
+  output, COMPLETE/STALLED diagnostics, and no gameplay automation.
 
 ### Changed
 

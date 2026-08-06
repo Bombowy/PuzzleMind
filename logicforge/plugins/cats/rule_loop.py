@@ -9,8 +9,14 @@ from logicforge.plugins.cats.adjacent_color_pair_exclusion_rule import (
 from logicforge.plugins.cats.color_confined_to_line_rule import (
     ColorConfinedToLineRule,
 )
+from logicforge.plugins.cats.monochromatic_line_color_exclusion_rule import (
+    MonochromaticLineColorExclusionRule,
+)
 from logicforge.plugins.cats.single_remaining_color_cell_rule import (
     SingleRemainingColorCellRule,
+)
+from logicforge.plugins.cats.single_remaining_line_cell_rule import (
+    SingleRemainingLineCellRule,
 )
 
 
@@ -23,6 +29,8 @@ class CatsApplyRule(Protocol):
 
 DEFAULT_CATS_RULES: tuple[CatsApplyRule, ...] = (
     SingleRemainingColorCellRule(),
+    SingleRemainingLineCellRule(),
+    MonochromaticLineColorExclusionRule(),
     AdjacentColorPairExclusionRule(),
     ColorConfinedToLineRule(),
 )
