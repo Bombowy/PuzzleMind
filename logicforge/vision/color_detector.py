@@ -43,7 +43,12 @@ class ColorObservation:
 
 @dataclass(frozen=True, slots=True)
 class ColorDetectionDiagnostics:
-    """Expose primitive sampling and clustering evidence without OpenCV objects."""
+    """Expose primitive sampling and clustering evidence without OpenCV objects.
+
+    ``sample_inner_fraction`` is retained for compatibility with existing result
+    consumers. ``sample_pixel_counts`` records all four corner-patch pixels before
+    corner-level outlier rejection.
+    """
 
     rows: int
     columns: int

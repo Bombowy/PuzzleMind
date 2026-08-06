@@ -15,6 +15,9 @@ from logicforge.infrastructure.opencv_cats_screen_state_detector import (
     CatsScreenStateDetectionSettings,
     OpenCvCatsScreenStateDetector,
 )
+from logicforge.infrastructure.opencv_cats_tile_grid_detector import (
+    OpenCvCatsTileGridDetector,
+)
 from logicforge.plugins.cats import (
     CatsScreenPoint,
     CatsScreenRect,
@@ -43,6 +46,7 @@ from synthetic_cats_screen_states import (
     synthetic_ranking_screen,
     synthetic_unknown_screen,
 )
+from synthetic_cats_tile_grids import synthetic_cats_tile_grid
 from synthetic_vision import screenshot_from_image
 
 ORANGE = (0, 145, 255)
@@ -467,6 +471,41 @@ def test_regular_grid_screen_is_board_without_action() -> None:
     assert result.diagnostics.board_candidate is not None
     assert result.diagnostics.detected_rows == 6
     assert result.diagnostics.detected_columns == 6
+
+
+def test_cats_tile_lattice_is_board_without_reliable_outer_contour() -> None:
+    """Use tile-grid-first geometry for a stable Cats-like board by default."""
+
+    screenshot = synthetic_cats_tile_grid(
+        rows=9,
+        columns=9,
+        pastel_outer_column=True,
+    ).screenshot
+
+    result = OpenCvCatsScreenStateDetector().detect(screenshot)
+
+    assert result.state is CatsScreenState.BOARD
+    assert result.diagnostics.detected_rows == 9
+    assert result.diagnostics.detected_columns == 9
+
+
+def test_successful_tile_grid_does_not_invoke_generic_board_fallback() -> None:
+    """Never let contour fallback replace a complete primary Cats lattice."""
+
+    board_detector = _FakeBoardDetector(fail=True)
+    grid_detector = _FakeGridDetector(fail=True)
+    screenshot = synthetic_cats_tile_grid(rows=9, columns=9).screenshot
+    detector = OpenCvCatsScreenStateDetector(
+        tile_grid_detector=OpenCvCatsTileGridDetector(),
+        board_detector=board_detector,
+        grid_detector=grid_detector,
+    )
+
+    result = detector.detect(screenshot)
+
+    assert result.state is CatsScreenState.BOARD
+    assert board_detector.calls == 0
+    assert grid_detector.calls == 0
 
 
 def test_empty_unknown_screen_returns_unknown_without_action() -> None:

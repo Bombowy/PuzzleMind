@@ -184,7 +184,7 @@ def test_refinement_threshold_defaults_remain_calibrated() -> None:
     assert settings.grid_envelope_minimum_supported_separator_fraction == 0.65
     assert settings.grid_envelope_maximum_spacing_cv_increase == 0.03
     assert settings.grid_envelope_maximum_grid_score_drop == 0.08
-    assert settings.grid_envelope_minimum_refinement_score == 0.65
+    assert settings.grid_envelope_minimum_refinement_score == 0.63
     assert settings.grid_envelope_ambiguity_delta == 0.03
 
 

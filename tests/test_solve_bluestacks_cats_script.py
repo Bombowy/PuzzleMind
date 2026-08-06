@@ -3,6 +3,7 @@
 from collections.abc import Callable
 from datetime import UTC, datetime
 from inspect import getsource
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -11,6 +12,12 @@ from scripts import solve_bluestacks_cats as solve_script
 from logicforge.automation.mouse import MouseButton, MouseController, ScreenPoint
 from logicforge.core import Board, BoardStateError
 from logicforge.infrastructure.windows import MouseAutomationError
+from logicforge.plugins.cats.board_actions import place_cat
+from logicforge.plugins.cats.existing_cat import (
+    CatsExistingCatDetection,
+    CatsExistingCatDiagnostics,
+    CatsExistingCatObservation,
+)
 from logicforge.vision.board_detector import (
     BoardDetection,
     BoardDetectionDiagnostics,
@@ -317,6 +324,25 @@ class _ColorDetector:
         return self.result
 
 
+class _ExistingCatDetector:
+    """Return no already-present cats for legacy solve fixtures."""
+
+    calls = 0
+
+    def detect(
+        self,
+        screenshot: Screenshot,
+        grid: GridDetection,
+        colors: ColorDetectionResult,
+    ) -> CatsExistingCatDetection:
+        del screenshot, grid, colors
+        type(self).calls += 1
+        return CatsExistingCatDetection(
+            cats=(),
+            diagnostics=CatsExistingCatDiagnostics(cells=()),
+        )
+
+
 class _FakeMouseController(MouseController):
     """Record portable click calls without touching the real native pointer."""
 
@@ -368,6 +394,7 @@ def _configure_pipeline(
     _GridDetector.error = grid_error
     _ColorDetector.error = color_error
     _ColorDetector.result = _color_result()
+    _ExistingCatDetector.calls = 0
 
     monkeypatch.setattr(solve_script, "WindowCaptureService", _CaptureService)
     monkeypatch.setattr(solve_script, "Win32BlueStacksWindowLocator", object)
@@ -375,6 +402,11 @@ def _configure_pipeline(
     monkeypatch.setattr(solve_script, "OpenCvBoardDetector", _BoardDetector)
     monkeypatch.setattr(solve_script, "OpenCvGridDetector", _GridDetector)
     monkeypatch.setattr(solve_script, "OpenCvColorDetector", _ColorDetector)
+    monkeypatch.setattr(
+        solve_script,
+        "OpenCvCatsExistingCatDetector",
+        _ExistingCatDetector,
+    )
 
 
 def _set_complete_result(board: Board) -> int:
@@ -400,7 +432,7 @@ def test_analyze_captured_board_runs_each_vision_stage_once_without_solving(
 ) -> None:
     """Keep capture analysis limited to board, grid, and color detection."""
 
-    calls = {"board": 0, "grid": 0, "color": 0}
+    calls = {"board": 0, "grid": 0, "color": 0, "cat": 0}
 
     class CountingBoardDetector:
         def __init__(self, settings: object) -> None:
@@ -439,6 +471,22 @@ def test_analyze_captured_board_runs_each_vision_stage_once_without_solving(
             calls["color"] += 1
             return _color_result()
 
+    class CountingExistingCatDetector:
+        def detect(
+            self,
+            screenshot: Screenshot,
+            grid: GridDetection,
+            colors: ColorDetectionResult,
+        ) -> CatsExistingCatDetection:
+            assert screenshot is _CaptureService.screenshot
+            assert grid == _grid_detection()
+            assert colors == _color_result()
+            calls["cat"] += 1
+            return CatsExistingCatDetection(
+                cats=(),
+                diagnostics=CatsExistingCatDiagnostics(cells=()),
+            )
+
     def forbidden(*args: object, **kwargs: object) -> None:
         del args, kwargs
         pytest.fail("analysis must not create Board or invoke Cats rules")
@@ -446,15 +494,66 @@ def test_analyze_captured_board_runs_each_vision_stage_once_without_solving(
     monkeypatch.setattr(solve_script, "OpenCvBoardDetector", CountingBoardDetector)
     monkeypatch.setattr(solve_script, "OpenCvGridDetector", CountingGridDetector)
     monkeypatch.setattr(solve_script, "OpenCvColorDetector", CountingColorDetector)
+    monkeypatch.setattr(
+        solve_script,
+        "OpenCvCatsExistingCatDetector",
+        CountingExistingCatDetector,
+    )
     monkeypatch.setattr(solve_script, "Board", forbidden)
     monkeypatch.setattr(solve_script, "apply_cats_rules_until_stalled", forbidden)
 
     result = solve_script.analyze_captured_cats_board(_CaptureService.screenshot)
 
-    assert calls == {"board": 1, "grid": 1, "color": 1}
+    assert calls == {"board": 1, "grid": 1, "color": 1, "cat": 1}
     assert result.detected_board == _board_detection()
     assert result.grid == _grid_detection()
     assert result.color_result == _color_result()
+
+
+def test_analyze_captured_board_uses_tile_grid_primary_without_contour_detectors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Consume board and grid from one Cats lattice fit before color detection."""
+
+    calls = {"tile": 0, "color": 0}
+
+    class TileDetector:
+        def detect(self, screenshot: Screenshot) -> SimpleNamespace:
+            calls["tile"] += 1
+            return SimpleNamespace(board=_board_detection(), grid=_grid_detection())
+
+    class ColorDetector:
+        def __init__(self, settings: object) -> None:
+            del settings
+
+        def detect(
+            self,
+            screenshot: Screenshot,
+            grid: GridDetection,
+        ) -> ColorDetectionResult:
+            calls["color"] += 1
+            assert grid == _grid_detection()
+            return _color_result()
+
+    def forbidden(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        pytest.fail("generic contour geometry must not run after tile-grid success")
+
+    monkeypatch.setattr(solve_script, "OpenCvCatsTileGridDetector", TileDetector)
+    monkeypatch.setattr(solve_script, "OpenCvBoardDetector", forbidden)
+    monkeypatch.setattr(solve_script, "OpenCvGridDetector", forbidden)
+    monkeypatch.setattr(solve_script, "OpenCvColorDetector", ColorDetector)
+    monkeypatch.setattr(
+        solve_script,
+        "OpenCvCatsExistingCatDetector",
+        _ExistingCatDetector,
+    )
+
+    result = solve_script.analyze_captured_cats_board(_screenshot())
+
+    assert calls == {"tile": 1, "color": 1}
+    assert result.detected_board == _board_detection()
+    assert result.grid == _grid_detection()
 
 
 @pytest.mark.parametrize(
@@ -508,6 +607,99 @@ def test_solve_analyzed_board_creates_solves_and_maps_exactly_once(
     assert solved.successful_applications in (1, 2)
     assert solved.click_plan is expected_plan
     assert solved.status == expected_status
+
+
+def test_existing_cat_is_placed_before_rules_and_excluded_from_click_plan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Use one Board and produce the requested five new targets from six final K."""
+
+    size = 6
+    lines = tuple(index * 20 for index in range(size + 1))
+    grid = GridDetection(
+        horizontal_lines=lines,
+        vertical_lines=lines,
+        rows=size,
+        columns=size,
+        cells=tuple(
+            CellBounds(
+                row=row,
+                column=column,
+                x=lines[column],
+                y=lines[row],
+                width=20,
+                height=20,
+                center_x=lines[column] + 10,
+                center_y=lines[row] + 10,
+            )
+            for row in range(size)
+            for column in range(size)
+        ),
+        confidence=0.95,
+    )
+    colors = _color_result(
+        tuple(tuple(f"C{column}" for column in range(size)) for _ in range(size))
+    )
+    existing = CatsExistingCatDetection(
+        cats=(CatsExistingCatObservation(1, 0, 0.91),),
+        diagnostics=CatsExistingCatDiagnostics(cells=()),
+    )
+    board_input = solve_script.CatsBoardInput(
+        detected_board=BoardDetection(0, 0, 120, 120, 0.95),
+        grid=grid,
+        color_result=colors,
+        existing_cat_detection=existing,
+    )
+    expected_final = ((0, 2), (1, 0), (2, 4), (3, 1), (4, 5), (5, 3))
+
+    def complete(board: Board) -> int:
+        assert board.is_cat(1, 0)
+        for row, column in expected_final:
+            if (row, column) != (1, 0):
+                place_cat(board, row, column)
+        return 5
+
+    monkeypatch.setattr(solve_script, "apply_cats_rules_until_stalled", complete)
+    solved = solve_script.solve_analyzed_cats_board(
+        WindowInfo("BlueStacks", WindowBounds(100, 200, 120, 120)),
+        board_input,
+    )
+
+    assert solve_script.collect_cat_coordinates(solved.logical_board) == expected_final
+    assert tuple((target.row, target.column) for target in solved.click_plan) == (
+        (0, 2),
+        (2, 4),
+        (3, 1),
+        (4, 5),
+        (5, 3),
+    )
+    assert solved.logical_board.get(1, 0) == "K"
+
+
+def test_click_plan_validates_existing_coordinates_before_mapping() -> None:
+    board = _logical_board()
+    board.set_cat(0, 0)
+    with pytest.raises(solve_script.CatClickPlanError, match="duplicates"):
+        solve_script.build_cat_click_plan(
+            board,
+            _grid_detection(),
+            _offset_window(),
+            existing_cat_coordinates=((0, 0), (0, 0)),
+        )
+    with pytest.raises(solve_script.CatClickPlanError, match="outside"):
+        solve_script.build_cat_click_plan(
+            board,
+            _grid_detection(),
+            _offset_window(),
+            existing_cat_coordinates=((2, 0),),
+        )
+    with pytest.raises(solve_script.CatClickPlanError, match="not K"):
+        solve_script.build_cat_click_plan(
+            board,
+            _grid_detection(),
+            _offset_window(),
+            existing_cat_coordinates=((0, 1),),
+        )
 
 
 def test_solve_captured_board_composes_analysis_then_solve_once(

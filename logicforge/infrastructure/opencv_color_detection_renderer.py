@@ -6,6 +6,8 @@ import cv2
 import numpy as np
 from numpy.typing import NDArray
 
+from logicforge.config.settings import ColorDetectionSettings
+from logicforge.infrastructure.opencv_color_detector import OpenCvColorDetector
 from logicforge.vision.board_detector import BoardDetection
 from logicforge.vision.color_detector import ColorDetectionResult, LabColor
 from logicforge.vision.grid_detector import CellBounds, GridDetection
@@ -23,6 +25,12 @@ class OpenCvColorDetectionDebugRenderer:
     _CELL_COLOR = (235, 235, 235)
     _TEXT_COLOR = (255, 255, 255)
     _TEXT_OUTLINE_COLOR = (20, 20, 20)
+    _SAMPLE_REGION_COLOR = (255, 120, 0)
+
+    def __init__(self, settings: ColorDetectionSettings | None = None) -> None:
+        """Share exact corner-patch geometry with the configured color detector."""
+
+        self._sampling_geometry = OpenCvColorDetector(settings)
 
     def render(
         self,
@@ -32,6 +40,7 @@ class OpenCvColorDetectionDebugRenderer:
         result: ColorDetectionResult,
         *,
         draw_representative_swatches: bool = True,
+        draw_sample_regions: bool = False,
     ) -> NDArray[np.uint8]:
         """Return a BGR overlay with board, cells, logical IDs, and summary."""
 
@@ -47,6 +56,8 @@ class OpenCvColorDetectionDebugRenderer:
             strict=True,
         ):
             self._draw_cell(overlay, cell)
+            if draw_sample_regions:
+                self._draw_sample_regions(overlay, cell)
             self._draw_label(overlay, cell, observation.color_id)
             if draw_representative_swatches:
                 self._draw_swatch(
@@ -67,6 +78,7 @@ class OpenCvColorDetectionDebugRenderer:
         *,
         debug: bool,
         draw_representative_swatches: bool = True,
+        draw_sample_regions: bool = False,
     ) -> Path | None:
         """Persist the annotated copy only under explicit debug behavior."""
 
@@ -78,6 +90,7 @@ class OpenCvColorDetectionDebugRenderer:
             grid,
             result,
             draw_representative_swatches=draw_representative_swatches,
+            draw_sample_regions=draw_sample_regions,
         )
         output_path = destination.resolve()
         try:
@@ -127,6 +140,25 @@ class OpenCvColorDetectionDebugRenderer:
             1,
             cv2.LINE_AA,
         )
+
+    def _draw_sample_regions(
+        self,
+        overlay: NDArray[np.uint8],
+        cell: CellBounds,
+    ) -> None:
+        """Outline the exact TL, TR, BL, BR half-open color evidence regions."""
+
+        for left, top, right, bottom in self._sampling_geometry._corner_sample_bounds(
+            cell
+        ):
+            cv2.rectangle(
+                overlay,
+                (left, top),
+                (right - 1, bottom - 1),
+                self._SAMPLE_REGION_COLOR,
+                1,
+                cv2.LINE_AA,
+            )
 
     def _draw_label(
         self,

@@ -4,7 +4,7 @@ import argparse
 import sys
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from logicforge.automation.mouse import MouseButton, MouseController, ScreenPoint
 from logicforge.config.settings import (
@@ -13,6 +13,12 @@ from logicforge.config.settings import (
 )
 from logicforge.core import Board, BoardStateError
 from logicforge.infrastructure.opencv_board_detector import OpenCvBoardDetector
+from logicforge.infrastructure.opencv_cats_existing_cat_detector import (
+    OpenCvCatsExistingCatDetector,
+)
+from logicforge.infrastructure.opencv_cats_tile_grid_detector import (
+    OpenCvCatsTileGridDetector,
+)
 from logicforge.infrastructure.opencv_color_detector import OpenCvColorDetector
 from logicforge.infrastructure.opencv_grid_detector import OpenCvGridDetector
 from logicforge.infrastructure.windows import (
@@ -21,7 +27,13 @@ from logicforge.infrastructure.windows import (
     Win32BlueStacksWindowLocator,
     Win32MouseController,
 )
-from logicforge.plugins.cats import apply_cats_rules_until_stalled
+from logicforge.plugins.cats import apply_cats_rules_until_stalled, place_cat
+from logicforge.plugins.cats.existing_cat import (
+    CatsExistingCatDetection,
+    CatsExistingCatDetectionError,
+    CatsExistingCatDiagnostics,
+)
+from logicforge.plugins.cats.tile_grid import CatsTileGridDetectionError
 from logicforge.vision.board_detector import BoardDetection, BoardDetectionError
 from logicforge.vision.color_detector import (
     ColorDetectionError,
@@ -72,6 +84,12 @@ class CatsBoardInput:
     detected_board: BoardDetection
     grid: GridDetection
     color_result: ColorDetectionResult
+    existing_cat_detection: CatsExistingCatDetection = field(
+        default_factory=lambda: CatsExistingCatDetection(
+            cats=(),
+            diagnostics=CatsExistingCatDiagnostics(cells=()),
+        )
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,8 +233,10 @@ def build_cat_click_plan(
     board: Board,
     grid: GridDetection,
     window: WindowInfo,
+    *,
+    existing_cat_coordinates: Sequence[tuple[int, int]] = (),
 ) -> tuple[CatClickTarget, ...]:
-    """Map every confirmed K after validating complete Board/Grid dimensions."""
+    """Map only new K cells after validating dimensions and exclusions first."""
 
     if len(board.cells) != grid.rows:
         raise CatClickPlanError(
@@ -230,26 +250,56 @@ def build_cat_click_plan(
                 f"has {grid.columns} columns."
             )
 
+    excluded = tuple(existing_cat_coordinates)
+    if len(excluded) != len(set(excluded)):
+        raise CatClickPlanError("Existing cat coordinates contain duplicates.")
+    for row, column in excluded:
+        if row < 0 or column < 0 or row >= grid.rows or column >= grid.columns:
+            raise CatClickPlanError(
+                f"Existing cat coordinate ({row}, {column}) is outside the "
+                f"detected {grid.rows}x{grid.columns} grid."
+            )
+        if not board.is_cat(row, column):
+            raise CatClickPlanError(
+                f"Existing cat coordinate ({row}, {column}) is not K on final Board."
+            )
+    excluded_set = set(excluded)
+    new_cats = tuple(
+        coordinate
+        for coordinate in collect_cat_coordinates(board)
+        if coordinate not in excluded_set
+    )
     return tuple(
-        create_cat_click_target(window, grid, row, column)
-        for row, column in collect_cat_coordinates(board)
+        create_cat_click_target(window, grid, row, column) for row, column in new_cats
     )
 
 
 def analyze_captured_cats_board(screenshot: Screenshot) -> CatsBoardInput:
-    """Detect board, grid, and immutable colors without creating a logical Board."""
+    """Fit Cats tiles first, then classify immutable colors without a Board."""
 
-    board_settings = BoardDetectionSettings()
-    detected_board = OpenCvBoardDetector(board_settings).detect(screenshot)
-    grid = OpenCvGridDetector(board_settings).detect(screenshot, detected_board)
+    try:
+        tile_grid = OpenCvCatsTileGridDetector().detect(screenshot)
+    except CatsTileGridDetectionError:
+        board_settings = BoardDetectionSettings()
+        detected_board = OpenCvBoardDetector(board_settings).detect(screenshot)
+        grid = OpenCvGridDetector(board_settings).detect(screenshot, detected_board)
+    else:
+        detected_board = tile_grid.board
+        grid = tile_grid.grid
     color_result = OpenCvColorDetector(ColorDetectionSettings()).detect(
         screenshot,
         grid,
+    )
+    existing_cat_detection = OpenCvCatsExistingCatDetector().detect(
+        screenshot,
+        grid,
+        color_result,
     )
     return CatsBoardInput(
         detected_board=detected_board,
         grid=grid,
         color_result=color_result,
+        existing_cat_detection=existing_cat_detection,
     )
 
 
@@ -260,8 +310,21 @@ def solve_analyzed_cats_board(
     """Create and solve one Board once, then build one final click plan."""
 
     logical_board = Board(board_input.color_result)
+    existing_coordinates = tuple(
+        (cat.row, cat.column) for cat in board_input.existing_cat_detection.cats
+    )
+    for row, column in existing_coordinates:
+        place_cat(logical_board, row, column)
     successful_applications = apply_cats_rules_until_stalled(logical_board)
-    click_plan = build_cat_click_plan(logical_board, board_input.grid, window)
+    if existing_coordinates:
+        click_plan = build_cat_click_plan(
+            logical_board,
+            board_input.grid,
+            window,
+            existing_cat_coordinates=existing_coordinates,
+        )
+    else:
+        click_plan = build_cat_click_plan(logical_board, board_input.grid, window)
     return CatsSolvedBoard(
         board_input=board_input,
         logical_board=logical_board,
@@ -383,6 +446,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
         return 3
     except ColorDetectionError as error:
         print(f"Color detection failed: {error}", file=sys.stderr)
+        return 4
+    except CatsExistingCatDetectionError as error:
+        print(f"Existing cat detection failed: {error}", file=sys.stderr)
         return 4
 
     try:

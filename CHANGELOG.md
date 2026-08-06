@@ -74,6 +74,13 @@ API reaches stability.
 - Bounded transition polling, stationary-overlay retries, stale-board fingerprint
   protection, pre-action window-bounds checks, `--max-levels`, Ctrl+C summaries,
   and a single-capture no-click autoplay dry run.
+- Backend-neutral Cats tile-grid contracts, a classical OpenCV tile-lattice
+  detector, a dedicated debug renderer, and one-frame geometry/color diagnostics.
+- Cats-like synthetic fixtures covering 5x5, 8x8, 9x9, 10x10, rectangular,
+  pastel-edge, advertisement, portrait, and landscape geometry without an outer
+  board border.
+- Backend-neutral existing-cat observations/diagnostics, a CellBounds-only
+  classical OpenCV detector and renderer, and a zero-click diagnostic command.
 
 ### Changed
 
@@ -99,6 +106,22 @@ API reaches stability.
 - Treat contour-derived board rectangles as regular-grid seeds and refine a seed
   by at most one image-supported outer cell band on each axis. The same shared
   internal analyzer and mandatory validation re-evaluate every proposed envelope.
+- Made colored tile components, repeated-size families, clustered row/column
+  centers, regular pitch, unique slot assignment, and lattice occupancy the
+  primary Cats board/grid geometry. Board bounds now come from half-pitch lattice
+  extrapolation, while the unchanged contour-first board/grid path remains an
+  optional typed fallback.
+- Updated Cats BOARD classification and reusable solve analysis to consume one
+  combined tile-grid result before the unchanged LAB color detector. Autoplay
+  inherits the new geometry through the existing reusable analysis function; the
+  square/color-count guard and all click semantics remain unchanged.
+- Replaced symbol-prone central color crops with four scale-relative inset corner
+  patches. Each patch retains the existing robust LAB estimator; one corner-level
+  outlier is discarded and the other three must satisfy deterministic consensus
+  before the unchanged complete-link color clustering runs.
+- Select maximal independently supported Cats row/column runs before Cartesian
+  slot assignment, retain missing slots in full public geometry, initialize the
+  single Board through `place_cat()`, and exclude existing cats from click plans.
 
 ### Fixed
 
@@ -122,6 +145,12 @@ API reaches stability.
   and complete grid evidence. Ambiguous directions fail closed; rectangular grids,
   weak internal-line recovery, and the Cats geometry guard remain unchanged, with
   no square, Cats, or color-count assumption in generic vision.
+- Prevent central Cats sprites, X marks, highlights, and transition animation from
+  creating spurious color classes while keeping the LAB cluster-distance threshold
+  fixed at 18.0. Two strongly conflicting corner pairs now fail closed.
+- Prevent one existing cat from shrinking a supported live-like 6x6 lattice to an
+  inner 5x5, reject thin X marks as cats, fail closed on conflicting existing-cat
+  invariants, and validate final solutions over all K while clicking only new K.
 
 ## [0.1.0] - 2026-08-06
 

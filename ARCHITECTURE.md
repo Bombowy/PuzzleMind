@@ -216,10 +216,14 @@ cell centers, and optional row/column labels. Its normal and rejected overlays a
 also explicit debug-only persistence paths.
 
 `OpenCvColorDetector` consumes only the immutable screenshot and public grid. It
-crops the central configured fraction of every half-open cell, converts BGR pixels
-to OpenCV's 8-bit LAB representation, computes an initial channel median, removes
-the configured farthest-pixel fraction, and takes a final median. This robustly
-estimates the background without assigning semantics to minority symbol strokes.
+crops four scale-relative inset corner patches from every half-open cell, avoiding
+both tile edges and the symbol-prone center. Each patch is converted to OpenCV's
+8-bit LAB representation and passed through the existing median/farthest-pixel
+trim estimator. A channel-wise corner median identifies exactly one farthest
+patch; the final representative is the channel-wise median of the other three.
+At least three corner patches must form a complete-link-compatible consensus at
+the unchanged LAB threshold. This estimates the background without recognizing
+central symbols, cats, X marks, highlights, or animation sprites.
 
 Cell representatives are grouped with deterministic complete-link agglomeration:
 two clusters merge only when every cross-cluster LAB distance is within the typed
@@ -263,6 +267,72 @@ This plan-then-apply structure provides atomicity without a rollback copy. The
 separate `block_cell()` action delegates one idempotent exclusion to `Board` and
 does not propagate. These are operations for future rules, not rule classes or a
 solver engine.
+
+## Cats tile-grid-first vision
+
+Cats board geometry does not depend on a single outer board contour. The plugin
+contract `CatsTileGridDetector` returns one immutable pair of existing
+`BoardDetection` and `GridDetection` results plus primitive diagnostics. Its
+OpenCV adapter starts with individual colored components rather than a board-sized
+contour: an HSV-saturation-or-LAB-chroma mask is cleaned by a small scale-relative
+kernel, then similarly sized near-square components are grouped into families.
+
+For each stable family, component centers are clustered independently on X and Y.
+Clusters need repeated support in the orthogonal dimension, which excludes
+isolated advertisement and UI components before pitch fitting. The maximal
+regular center run is selected independently on each axis before Cartesian slot
+assignment. Every fitted row and column then receives a real-component count and
+a normalized support ratio against the opposite fitted dimension. A missing
+intersection is allowed only inside those supported axes while pitch CV, slot
+residual, occupancy, bounds, and score all pass. No empty outer row or column is
+extrapolated. Candidate ordering starts with supported lattice area, then minimum
+axis support, real component count, occupancy, score, combined pitch CV, residual,
+and deterministic position. Confidence combines tile-size consistency,
+row-pitch regularity, column-pitch regularity, occupancy, and slot residual
+quality. It has no square, expected-dimension, palette, color-count, OCR,
+template, or Cats-rule term.
+
+Internal cell boundaries are midpoints of adjacent fitted centers. Outer bounds
+are extrapolated by half the median pitch, so public cells include the narrow gaps
+around rounded tile interiors. `CellBounds` tile the complete board without gaps
+or overlap and retain fitted tile centers. This geometry is passed directly to the
+existing puzzle-neutral `OpenCvColorDetector`; it is not re-detected by
+`OpenCvGridDetector`.
+
+Cats screen-state BOARD classification and reusable solve analysis use this
+combined detector first. A typed failure may fall back to the retained generic
+contour-first `OpenCvBoardDetector` and `OpenCvGridDetector`, which remain the
+generic path for other puzzles and diagnostics. Autoplay consumes only the shared
+analysis function, and its final `rows == columns == color_count` guard remains a
+separate fail-closed Cats invariant.
+
+## Cats existing-cat awareness
+
+`CatsExistingCatDetector` is a backend-neutral plugin port over `Screenshot`,
+`GridDetection`, and `ColorDetectionResult`. The OpenCV adapter never searches
+outside public `CellBounds`, so avatars, counters, power-ups, advertisements, and
+BlueStacks chrome are outside its input domain. Each cell supplies a central ROI
+inset by 8% horizontally and 6% vertically. Its existing corner-safe
+`representative_lab` is the background reference; the global complete-link color
+threshold remains 18 and is not reused for occupancy.
+
+Pixels at LAB distance 32 or greater form Cats foreground. A 3.5%-of-shorter-cell
+elliptical OPEN/CLOSE kernel removes scale-relative noise. Connected-component
+evidence records foreground area, largest coherent area, width and height
+coverage, and normalized component-center offset. Hard acceptance requires at
+least 0.26 foreground, 0.24 largest component, 0.38 width, 0.38 height, at most
+0.18 center offset, and score at least 0.40. The score is 25% foreground + 25%
+largest component + 20% width + 20% height + 10% centrality. Thin black or white
+X marks can span a wide bounding box but fail the area gates.
+
+Accepted evidence is checked before logical mutation: existing cats must be
+unique by row, column, and immutable original color and may not touch in eight
+directions. Contradictory image evidence raises a typed error without choosing a
+winner. Solve composition creates one `Board`, applies existing cats in row-major
+order through `place_cat()`, and only then runs unchanged Cats rules. Final
+validation still covers every K and requires the full row/column/color/non-touch
+solution. The click plan is exactly final K minus validated existing coordinates,
+so counters and double-click execution cover only newly placed cats.
 
 ## Solver module
 

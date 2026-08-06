@@ -17,6 +17,10 @@ from logicforge.infrastructure.opencv_cats_screen_state_detector import (
 )
 from logicforge.infrastructure.windows import MouseAutomationError
 from logicforge.plugins.cats import (
+    CatsExistingCatDetection,
+    CatsExistingCatDetectionError,
+    CatsExistingCatDiagnostics,
+    CatsExistingCatObservation,
     CatsScreenPoint,
     CatsScreenRect,
     CatsScreenState,
@@ -51,6 +55,7 @@ from logicforge.vision.window_capture import (
 )
 
 CAT_COLUMNS = (1, 3, 0, 2)
+SIX_CAT_COLUMNS = (2, 0, 4, 1, 5, 3)
 NINE_CAT_COLUMNS = (0, 2, 4, 1, 3, 6, 8, 5, 7)
 COLUMN_COLOR_MATRIX = tuple(
     tuple(f"C{column}" for column in range(4)) for _ in range(4)
@@ -145,6 +150,8 @@ def _color_result(
 
 def _board_input(
     matrix: tuple[tuple[str, ...], ...] = COLUMN_COLOR_MATRIX,
+    *,
+    existing_coordinates: tuple[tuple[int, int], ...] = (),
 ) -> solve_script.CatsBoardInput:
     """Return complete immutable vision input for one board."""
 
@@ -152,6 +159,13 @@ def _board_input(
         detected_board=BoardDetection(10, 10, 60, 80, 0.9),
         grid=_grid(),
         color_result=_color_result(matrix),
+        existing_cat_detection=CatsExistingCatDetection(
+            cats=tuple(
+                CatsExistingCatObservation(row, column, 0.9)
+                for row, column in existing_coordinates
+            ),
+            diagnostics=CatsExistingCatDiagnostics(cells=()),
+        ),
     )
 
 
@@ -241,19 +255,26 @@ def _solved_board(
     if status == "COMPLETE":
         selected_cat_columns = cat_columns
         if selected_cat_columns is None:
-            selected_cat_columns = (
-                NINE_CAT_COLUMNS if actual_input.grid.rows == 9 else CAT_COLUMNS
-            )
+            if actual_input.grid.rows == 9:
+                selected_cat_columns = NINE_CAT_COLUMNS
+            elif actual_input.grid.rows == 6:
+                selected_cat_columns = SIX_CAT_COLUMNS
+            else:
+                selected_cat_columns = CAT_COLUMNS
         for row in range(actual_input.grid.rows):
             for column in range(actual_input.grid.columns):
                 if column == selected_cat_columns[row]:
                     logical_board.set_cat(row, column)
                 else:
                     logical_board.set_blocked(row, column)
+    existing_coordinates = tuple(
+        (cat.row, cat.column) for cat in actual_input.existing_cat_detection.cats
+    )
     click_plan = solve_script.build_cat_click_plan(
         logical_board,
         actual_input.grid,
         actual_window,
+        existing_cat_coordinates=existing_coordinates,
     )
     return solve_script.CatsSolvedBoard(
         board_input=actual_input,
@@ -714,6 +735,13 @@ def test_cats_input_geometry_guard_accepts_consistent_square_sizes(size: int) ->
     autoplay.validate_cats_board_input_geometry(_geometry_board_input(size, size, size))
 
 
+def test_cats_input_geometry_guard_rejects_rectangular_tile_lattice() -> None:
+    """Keep square Cats validity separate from rectangular lattice geometry."""
+
+    with pytest.raises(autoplay.CatsBoardGeometryMismatchError):
+        autoplay.validate_cats_board_input_geometry(_geometry_board_input(6, 9, 9))
+
+
 def test_generic_refined_9x9_reaches_guard_and_solver_without_autoplay_repair() -> None:
     """Consume final generic vision geometry exactly once through existing ports."""
 
@@ -730,6 +758,18 @@ def test_generic_refined_9x9_reaches_guard_and_solver_without_autoplay_repair() 
     assert solver.calls[0][1] is refined_input
     assert summary.solved_levels == 1
     assert len(mouse.clicks) == 18
+
+
+def test_autoplay_uses_shared_tile_grid_analysis_without_copying_cv_pipeline() -> None:
+    """Delegate board geometry to the reusable tile-grid-first solve analysis."""
+
+    assert vars(autoplay)["analyze_captured_cats_board"] is (
+        solve_script.analyze_captured_cats_board
+    )
+    source = getsource(autoplay).casefold()
+    assert "opencvcatstilegriddetector" not in source
+    assert "opencvboarddetector" not in source
+    assert "opencvgriddetector" not in source
 
 
 def test_transient_9x8_geometry_never_solves_clicks_or_updates_state(
@@ -966,6 +1006,142 @@ def test_validation_rejects_click_plan_mismatch_and_duplicate() -> None:
         autoplay.validate_complete_cats_solution(missing)
     with pytest.raises(autoplay.CatsSolutionValidationError, match="duplicate"):
         autoplay.validate_complete_cats_solution(duplicate)
+
+
+def test_complete_six_by_six_with_one_existing_cat_has_five_new_targets() -> None:
+    board_input = _geometry_board_input(6, 6, 6)
+    board_input = replace(
+        board_input,
+        existing_cat_detection=CatsExistingCatDetection(
+            cats=(CatsExistingCatObservation(1, 0, 0.93),),
+            diagnostics=CatsExistingCatDiagnostics(cells=()),
+        ),
+    )
+    solved = _solved_board(board_input, cat_columns=SIX_CAT_COLUMNS)
+
+    autoplay.validate_complete_cats_solution(solved)
+
+    assert len(solve_script.collect_cat_coordinates(solved.logical_board)) == 6
+    assert len(solved.click_plan) == 5
+    assert (1, 0) not in tuple(
+        (target.row, target.column) for target in solved.click_plan
+    )
+
+
+def test_autoplay_executes_only_new_cats_when_one_is_existing() -> None:
+    board_input = replace(
+        _geometry_board_input(6, 6, 6),
+        existing_cat_detection=CatsExistingCatDetection(
+            cats=(CatsExistingCatObservation(1, 0, 0.93),),
+            diagnostics=CatsExistingCatDiagnostics(cells=()),
+        ),
+    )
+    runner, _, _, _, mouse, _, _, _, _ = _runner(
+        (_detection(CatsScreenState.BOARD),),
+        board_inputs=(board_input,),
+    )
+
+    summary = runner.run()
+
+    assert summary.low_level_cat_clicks == 10
+    assert len(mouse.clicks) == 10
+    existing_cell = board_input.grid.cells[1 * 6]
+    existing_desktop = ScreenPoint(
+        _window().bounds.x + existing_cell.center_x,
+        _window().bounds.y + existing_cell.center_y,
+    )
+    assert all(point != existing_desktop for point, _ in mouse.clicks)
+
+
+def test_several_existing_cats_reduce_autoplay_click_count() -> None:
+    existing_coordinates = ((1, 0), (3, 1), (5, 3))
+    board_input = replace(
+        _geometry_board_input(6, 6, 6),
+        existing_cat_detection=CatsExistingCatDetection(
+            cats=tuple(
+                CatsExistingCatObservation(row, column, 0.9)
+                for row, column in existing_coordinates
+            ),
+            diagnostics=CatsExistingCatDiagnostics(cells=()),
+        ),
+    )
+    runner, _, _, _, mouse, _, _, _, _ = _runner(
+        (_detection(CatsScreenState.BOARD),),
+        board_inputs=(board_input,),
+    )
+
+    summary = runner.run()
+
+    assert summary.low_level_cat_clicks == 6
+    assert len(mouse.clicks) == 6
+
+
+def test_existing_cat_missing_from_final_k_fails_validation() -> None:
+    solved = _solved_board()
+    invalid_input = replace(
+        solved.board_input,
+        existing_cat_detection=CatsExistingCatDetection(
+            cats=(CatsExistingCatObservation(0, 0, 0.9),),
+            diagnostics=CatsExistingCatDiagnostics(cells=()),
+        ),
+    )
+    invalid = replace(solved, board_input=invalid_input)
+    with pytest.raises(autoplay.CatsSolutionValidationError, match="not K"):
+        autoplay.validate_complete_cats_solution(invalid)
+
+
+def test_duplicate_existing_coordinates_fail_validation() -> None:
+    solved = _solved_board()
+    detection = CatsExistingCatDetection(
+        cats=(CatsExistingCatObservation(0, 1, 0.9),),
+        diagnostics=CatsExistingCatDiagnostics(cells=()),
+    )
+    object.__setattr__(
+        detection,
+        "cats",
+        (
+            CatsExistingCatObservation(0, 1, 0.9),
+            CatsExistingCatObservation(0, 1, 0.9),
+        ),
+    )
+    invalid = replace(
+        solved,
+        board_input=replace(solved.board_input, existing_cat_detection=detection),
+    )
+    with pytest.raises(autoplay.CatsSolutionValidationError, match="duplicate"):
+        autoplay.validate_complete_cats_solution(invalid)
+
+
+def test_existing_cat_detection_contradiction_emits_zero_clicks() -> None:
+    locator = FakeWindowLocator()
+    capturer = FakeWindowCapturer()
+    detector = FakeCatsScreenStateDetector((_detection(CatsScreenState.BOARD),))
+    mouse = FakeMouseController()
+    clock = FakeClock()
+
+    def reject_analysis(screenshot: Screenshot) -> solve_script.CatsBoardInput:
+        del screenshot
+        diagnostics = CatsExistingCatDiagnostics(
+            cells=(),
+            rejection_reasons=("multiple existing cats were detected in one row",),
+        )
+        raise CatsExistingCatDetectionError("synthetic contradiction", diagnostics)
+
+    runner = autoplay.CatsAutoplayRunner(
+        settings=_settings(),
+        locator=locator,
+        capturer=capturer,
+        detector=detector,
+        renderer=FakeFailureRenderer(),
+        mouse_controller=mouse,
+        sleep_function=clock.sleep,
+        monotonic_function=clock.monotonic,
+        analyze_board=reject_analysis,
+    )
+
+    with pytest.raises(CatsExistingCatDetectionError):
+        runner.run()
+    assert mouse.clicks == []
 
 
 def test_validation_rejects_inconsistent_rows_columns_and_color_count() -> None:

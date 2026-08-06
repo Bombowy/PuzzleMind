@@ -12,6 +12,9 @@ from numpy.typing import NDArray
 
 from logicforge.config.settings import BoardDetectionSettings
 from logicforge.infrastructure.opencv_board_detector import OpenCvBoardDetector
+from logicforge.infrastructure.opencv_cats_tile_grid_detector import (
+    OpenCvCatsTileGridDetector,
+)
 from logicforge.infrastructure.opencv_grid_detector import OpenCvGridDetector
 from logicforge.plugins.cats.screen_state import (
     CatsScreenPoint,
@@ -20,6 +23,10 @@ from logicforge.plugins.cats.screen_state import (
     CatsScreenStateDetection,
     CatsScreenStateDetector,
     CatsScreenStateDiagnostics,
+)
+from logicforge.plugins.cats.tile_grid import (
+    CatsTileGridDetectionError,
+    CatsTileGridDetector,
 )
 from logicforge.vision.board_detector import BoardDetectionError, BoardDetector
 from logicforge.vision.grid_detector import GridDetectionError, GridDetector
@@ -385,13 +392,24 @@ class OpenCvCatsScreenStateDetector(CatsScreenStateDetector):
         settings: CatsScreenStateDetectionSettings | None = None,
         board_detector: BoardDetector | None = None,
         grid_detector: GridDetector | None = None,
+        tile_grid_detector: CatsTileGridDetector | None = None,
     ) -> None:
-        """Compose transition heuristics and one shared board/grid configuration."""
+        """Use tile-grid-first Cats geometry with an injectable generic fallback."""
 
         self._settings = settings or CatsScreenStateDetectionSettings()
         board_settings = BoardDetectionSettings()
         self._board_detector = board_detector or OpenCvBoardDetector(board_settings)
         self._grid_detector = grid_detector or OpenCvGridDetector(board_settings)
+        legacy_geometry_was_injected = (
+            board_detector is not None or grid_detector is not None
+        )
+        self._tile_grid_detector = (
+            tile_grid_detector
+            if tile_grid_detector is not None
+            else (
+                None if legacy_geometry_was_injected else OpenCvCatsTileGridDetector()
+            )
+        )
 
     def detect(self, screenshot: Screenshot) -> CatsScreenStateDetection:
         """Classify in viewport, LEVEL_COMPLETE, RANKING, BOARD, UNKNOWN order."""
@@ -1318,13 +1336,53 @@ class OpenCvCatsScreenStateDetector(CatsScreenStateDetector):
         ranking_score: float,
         rejection_reasons: list[str],
     ) -> CatsScreenStateDetection:
-        """Run existing BOARD detectors on the original full screenshot."""
+        """Run Cats tile-grid primary, then generic fallback, on the full frame."""
 
         board_rect: CatsScreenRect | None = None
         board_confidence: float | None = None
         grid_confidence: float | None = None
         rows: int | None = None
         columns: int | None = None
+        if self._tile_grid_detector is not None:
+            try:
+                tile_grid = self._tile_grid_detector.detect(screenshot)
+            except CatsTileGridDetectionError:
+                rejection_reasons.append(
+                    "Cats tile-grid detector rejected the screenshot"
+                )
+            else:
+                board = tile_grid.board
+                grid = tile_grid.grid
+                board_rect = CatsScreenRect(
+                    x=board.x,
+                    y=board.y,
+                    width=board.width,
+                    height=board.height,
+                )
+                board_confidence = board.confidence
+                grid_confidence = grid.confidence
+                rows = grid.rows
+                columns = grid.columns
+                diagnostics = self._diagnostics(
+                    viewport_candidate=viewport_candidate,
+                    viewport_score=viewport_score,
+                    level_candidate=level_candidate,
+                    ranking_cards=ranking_cards,
+                    ranking_score=ranking_score,
+                    board_candidate=board_rect,
+                    board_confidence=board_confidence,
+                    grid_confidence=grid_confidence,
+                    rows=rows,
+                    columns=columns,
+                    rejection_reasons=tuple(rejection_reasons),
+                )
+                return CatsScreenStateDetection(
+                    state=CatsScreenState.BOARD,
+                    confidence=min(board_confidence, grid_confidence),
+                    action_point=None,
+                    diagnostics=diagnostics,
+                )
+
         try:
             board = self._board_detector.detect(screenshot)
             board_rect = CatsScreenRect(

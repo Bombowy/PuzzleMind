@@ -29,6 +29,7 @@ from logicforge.infrastructure.windows import (
     Win32MouseController,
 )
 from logicforge.plugins.cats import (
+    CatsExistingCatDetectionError,
     CatsScreenRect,
     CatsScreenState,
     CatsScreenStateDetection,
@@ -393,9 +394,28 @@ def validate_complete_cats_solution(solved: CatsSolvedBoard) -> None:
     )
     if len(planned_coordinates) != len(set(planned_coordinates)):
         raise CatsSolutionValidationError("Cat click plan contains duplicate targets.")
-    if planned_coordinates != cats:
+    existing_coordinates = tuple(
+        (cat.row, cat.column) for cat in solved.board_input.existing_cat_detection.cats
+    )
+    if len(existing_coordinates) != len(set(existing_coordinates)):
         raise CatsSolutionValidationError(
-            "Cat click plan does not exactly match row-major K coordinates."
+            "Existing cat evidence contains duplicate coordinates."
+        )
+    for row, column in existing_coordinates:
+        if row < 0 or column < 0 or row >= grid.rows or column >= grid.columns:
+            raise CatsSolutionValidationError(
+                f"Existing cat coordinate ({row}, {column}) is outside the grid."
+            )
+        if (row, column) not in cats:
+            raise CatsSolutionValidationError(
+                f"Existing cat coordinate ({row}, {column}) is not K on final Board."
+            )
+    expected_new_cats = tuple(
+        coordinate for coordinate in cats if coordinate not in set(existing_coordinates)
+    )
+    if planned_coordinates != expected_new_cats:
+        raise CatsSolutionValidationError(
+            "Cat click plan does not exactly match row-major new K coordinates."
         )
     if not len(cats) == grid.rows == grid.columns == color_result.color_count:
         raise CatsSolutionValidationError(
@@ -650,8 +670,15 @@ class CatsAutoplayRunner:
         board_input = self._analyze_board(screenshot)
         print(
             f"[board] detected {board_input.grid.rows}x{board_input.grid.columns}, "
-            f"colors={board_input.color_result.color_count}"
+            f"colors={board_input.color_result.color_count}, "
+            f"existing_cats={len(board_input.existing_cat_detection.cats)}"
         )
+        for cat in board_input.existing_cat_detection.cats:
+            color_id = board_input.color_result.color_matrix[cat.row][cat.column]
+            print(
+                f"[board] existing cat row={cat.row},column={cat.column},"
+                f"color={color_id},confidence={cat.confidence:.3f}"
+            )
         try:
             validate_cats_board_input_geometry(board_input)
         except CatsBoardGeometryMismatchError as error:
@@ -834,7 +861,9 @@ class CatsAutoplayRunner:
         )
         print_cat_click_plan(solved.click_plan)
         print(
-            f"[board] {solved.status}, cats={len(solved.click_plan)}, "
+            f"[board] {solved.status}, "
+            f"cats={len(collect_cat_coordinates(solved.logical_board))}, "
+            f"new_targets={len(solved.click_plan)}, "
             f"rules={solved.successful_applications}"
         )
 
@@ -905,6 +934,11 @@ def main(arguments: Sequence[str] | None = None) -> int:
     except ColorDetectionError as error:
         _save_failure_without_masking(runner)
         print(f"Color detection failed: {error}", file=sys.stderr)
+        print_autoplay_summary(runner.summary())
+        return 5
+    except CatsExistingCatDetectionError as error:
+        _save_failure_without_masking(runner)
+        print(f"Existing cat detection failed: {error}", file=sys.stderr)
         print_autoplay_summary(runner.summary())
         return 5
     except BoardStateError as error:

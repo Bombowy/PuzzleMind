@@ -350,6 +350,176 @@ class BoardDetectionSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class CatsTileGridDetectionSettings:
+    """Configure Cats tile-component and regular-lattice geometry fitting."""
+
+    tile_minimum_hsv_saturation: int = 45
+    tile_minimum_lab_chroma: float = 12.0
+    tile_minimum_component_area_ratio: float = 0.00035
+    tile_maximum_component_area_ratio: float = 0.035
+    tile_minimum_aspect_ratio: float = 0.72
+    tile_maximum_aspect_ratio: float = 1.38
+    tile_minimum_fill_ratio: float = 0.72
+    tile_size_family_tolerance_ratio: float = 0.18
+    tile_center_cluster_tolerance_ratio: float = 0.32
+    tile_pitch_cv_maximum: float = 0.12
+    tile_size_cv_maximum: float = 0.16
+    tile_slot_residual_ratio: float = 0.30
+    tile_grid_minimum_rows: int = 4
+    tile_grid_minimum_columns: int = 4
+    tile_grid_minimum_occupancy_ratio: float = 0.90
+    tile_grid_minimum_row_support_ratio: float = 0.75
+    tile_grid_minimum_column_support_ratio: float = 0.75
+    tile_grid_minimum_score: float = 0.78
+    tile_mask_kernel_relative_size: float = 0.003
+
+    def __post_init__(self) -> None:
+        """Reject unsafe, non-finite, or contradictory tile-grid thresholds."""
+
+        if not isinstance(self.tile_minimum_hsv_saturation, int) or isinstance(
+            self.tile_minimum_hsv_saturation, bool
+        ):
+            raise ValueError("tile_minimum_hsv_saturation must be an integer.")
+        if not 0 <= self.tile_minimum_hsv_saturation <= 255:
+            raise ValueError("tile_minimum_hsv_saturation must be within 0..255.")
+        unit_fields = {
+            "tile_minimum_component_area_ratio": (
+                self.tile_minimum_component_area_ratio
+            ),
+            "tile_maximum_component_area_ratio": (
+                self.tile_maximum_component_area_ratio
+            ),
+            "tile_minimum_fill_ratio": self.tile_minimum_fill_ratio,
+            "tile_size_family_tolerance_ratio": (self.tile_size_family_tolerance_ratio),
+            "tile_center_cluster_tolerance_ratio": (
+                self.tile_center_cluster_tolerance_ratio
+            ),
+            "tile_pitch_cv_maximum": self.tile_pitch_cv_maximum,
+            "tile_size_cv_maximum": self.tile_size_cv_maximum,
+            "tile_slot_residual_ratio": self.tile_slot_residual_ratio,
+            "tile_grid_minimum_occupancy_ratio": (
+                self.tile_grid_minimum_occupancy_ratio
+            ),
+            "tile_grid_minimum_row_support_ratio": (
+                self.tile_grid_minimum_row_support_ratio
+            ),
+            "tile_grid_minimum_column_support_ratio": (
+                self.tile_grid_minimum_column_support_ratio
+            ),
+            "tile_grid_minimum_score": self.tile_grid_minimum_score,
+            "tile_mask_kernel_relative_size": self.tile_mask_kernel_relative_size,
+        }
+        for field_name, value in unit_fields.items():
+            if not isfinite(value) or not 0.0 <= value <= 1.0:
+                raise ValueError(f"{field_name} must be finite within 0.0 and 1.0.")
+        if not isfinite(self.tile_minimum_lab_chroma) or not (
+            0.0 <= self.tile_minimum_lab_chroma <= 181.0
+        ):
+            raise ValueError("tile_minimum_lab_chroma must be finite within 0..181.")
+        if not (
+            0.0
+            < self.tile_minimum_component_area_ratio
+            < self.tile_maximum_component_area_ratio
+            <= 1.0
+        ):
+            raise ValueError(
+                "Tile component area ratios must satisfy 0 < minimum < maximum <= 1."
+            )
+        if not (
+            isfinite(self.tile_minimum_aspect_ratio)
+            and isfinite(self.tile_maximum_aspect_ratio)
+            and 0.0 < self.tile_minimum_aspect_ratio < 1.0
+            and self.tile_maximum_aspect_ratio > 1.0
+            and self.tile_minimum_aspect_ratio < self.tile_maximum_aspect_ratio
+        ):
+            raise ValueError(
+                "Tile aspect ratios must satisfy 0 < minimum < 1 < maximum."
+            )
+        positive_unit_fields = {
+            "tile_minimum_fill_ratio": self.tile_minimum_fill_ratio,
+            "tile_size_family_tolerance_ratio": (self.tile_size_family_tolerance_ratio),
+            "tile_center_cluster_tolerance_ratio": (
+                self.tile_center_cluster_tolerance_ratio
+            ),
+            "tile_pitch_cv_maximum": self.tile_pitch_cv_maximum,
+            "tile_size_cv_maximum": self.tile_size_cv_maximum,
+            "tile_slot_residual_ratio": self.tile_slot_residual_ratio,
+            "tile_grid_minimum_occupancy_ratio": (
+                self.tile_grid_minimum_occupancy_ratio
+            ),
+            "tile_grid_minimum_row_support_ratio": (
+                self.tile_grid_minimum_row_support_ratio
+            ),
+            "tile_grid_minimum_column_support_ratio": (
+                self.tile_grid_minimum_column_support_ratio
+            ),
+            "tile_grid_minimum_score": self.tile_grid_minimum_score,
+            "tile_mask_kernel_relative_size": self.tile_mask_kernel_relative_size,
+        }
+        for field_name, value in positive_unit_fields.items():
+            if value <= 0.0:
+                raise ValueError(f"{field_name} must be greater than 0.0.")
+        for field_name, value in {
+            "tile_grid_minimum_rows": self.tile_grid_minimum_rows,
+            "tile_grid_minimum_columns": self.tile_grid_minimum_columns,
+        }.items():
+            if not isinstance(value, int) or isinstance(value, bool) or value < 2:
+                raise ValueError(f"{field_name} must be an integer of at least 2.")
+
+
+@dataclass(frozen=True, slots=True)
+class CatsExistingCatDetectionSettings:
+    """Configure scale-relative Cats foreground occupancy detection per cell."""
+
+    cat_roi_horizontal_inset_ratio: float = 0.08
+    cat_roi_vertical_inset_ratio: float = 0.06
+    cat_foreground_lab_distance_threshold: float = 32.0
+    cat_mask_kernel_relative_size: float = 0.035
+    cat_minimum_foreground_ratio: float = 0.26
+    cat_minimum_largest_component_ratio: float = 0.24
+    cat_minimum_component_width_ratio: float = 0.38
+    cat_minimum_component_height_ratio: float = 0.38
+    cat_maximum_center_offset_ratio: float = 0.18
+    cat_minimum_score: float = 0.40
+
+    def __post_init__(self) -> None:
+        """Reject non-finite or contradictory occupancy thresholds."""
+
+        inset_fields = {
+            "cat_roi_horizontal_inset_ratio": self.cat_roi_horizontal_inset_ratio,
+            "cat_roi_vertical_inset_ratio": self.cat_roi_vertical_inset_ratio,
+        }
+        for field_name, value in inset_fields.items():
+            if not isfinite(value) or not 0.0 <= value < 0.5:
+                raise ValueError(f"{field_name} must be finite within [0.0, 0.5).")
+        unit_fields = {
+            "cat_mask_kernel_relative_size": self.cat_mask_kernel_relative_size,
+            "cat_minimum_foreground_ratio": self.cat_minimum_foreground_ratio,
+            "cat_minimum_largest_component_ratio": (
+                self.cat_minimum_largest_component_ratio
+            ),
+            "cat_minimum_component_width_ratio": (
+                self.cat_minimum_component_width_ratio
+            ),
+            "cat_minimum_component_height_ratio": (
+                self.cat_minimum_component_height_ratio
+            ),
+            "cat_maximum_center_offset_ratio": self.cat_maximum_center_offset_ratio,
+            "cat_minimum_score": self.cat_minimum_score,
+        }
+        for field_name, value in unit_fields.items():
+            if not isfinite(value) or not 0.0 < value <= 1.0:
+                raise ValueError(f"{field_name} must be finite within (0.0, 1.0].")
+        if not isfinite(self.cat_foreground_lab_distance_threshold) or not (
+            0.0 < self.cat_foreground_lab_distance_threshold <= 441.7
+        ):
+            raise ValueError(
+                "cat_foreground_lab_distance_threshold must be finite within "
+                "(0.0, 441.7]."
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class GridExtractionSettings:
     """Configure only normalized-boundary to pixel-cell conversion constraints."""
 
@@ -374,6 +544,9 @@ class ColorDetectionSettings:
     """
 
     sample_inner_fraction: float = 0.65
+    corner_sample_patch_fraction: float = 0.12
+    corner_sample_offset_fraction: float = 0.1
+    corner_sample_minimum_consistent_patches: int = 3
     outlier_trim_fraction: float = 0.15
     cluster_distance_threshold: float = 18.0
     maximum_within_cell_spread: float = 24.0
@@ -386,6 +559,32 @@ class ColorDetectionSettings:
 
         if not 0.0 < self.sample_inner_fraction <= 1.0:
             raise ValueError("sample_inner_fraction must be within (0.0, 1.0].")
+        if not isfinite(self.corner_sample_patch_fraction) or not (
+            0.0 < self.corner_sample_patch_fraction < 0.5
+        ):
+            raise ValueError(
+                "corner_sample_patch_fraction must be finite within (0.0, 0.5)."
+            )
+        if not isfinite(self.corner_sample_offset_fraction) or not (
+            0.0 <= self.corner_sample_offset_fraction < 0.5
+        ):
+            raise ValueError(
+                "corner_sample_offset_fraction must be finite within [0.0, 0.5)."
+            )
+        if self.corner_sample_offset_fraction + self.corner_sample_patch_fraction > 0.5:
+            raise ValueError(
+                "Corner sample offset plus patch size must not cross cell center."
+            )
+        if not isinstance(
+            self.corner_sample_minimum_consistent_patches, int
+        ) or isinstance(self.corner_sample_minimum_consistent_patches, bool):
+            raise ValueError(
+                "corner_sample_minimum_consistent_patches must be an integer."
+            )
+        if not 2 <= self.corner_sample_minimum_consistent_patches <= 4:
+            raise ValueError(
+                "corner_sample_minimum_consistent_patches must be within 2..4."
+            )
         if not 0.0 <= self.outlier_trim_fraction < 0.5:
             raise ValueError("outlier_trim_fraction must be within [0.0, 0.5).")
         if self.cluster_distance_threshold <= 0.0:
@@ -417,6 +616,9 @@ class VisionSettings:
     )
     color_detection: ColorDetectionSettings = field(
         default_factory=ColorDetectionSettings
+    )
+    cats_existing_cat_detection: CatsExistingCatDetectionSettings = field(
+        default_factory=CatsExistingCatDetectionSettings
     )
 
 

@@ -10,6 +10,14 @@ from logicforge.plugins.cats.color_confined_to_line_rule import (
 from logicforge.plugins.cats.color_subset_confined_to_lines_rule import (
     ColorSubsetConfinedToLinesRule,
 )
+from logicforge.plugins.cats.existing_cat import (
+    CatsExistingCatCellDiagnostic,
+    CatsExistingCatDetection,
+    CatsExistingCatDetectionError,
+    CatsExistingCatDetector,
+    CatsExistingCatDiagnostics,
+    CatsExistingCatObservation,
+)
 from logicforge.plugins.cats.impossible_cat_candidate_rule import (
     ImpossibleCatCandidateRule,
 )
@@ -33,9 +41,22 @@ from logicforge.plugins.cats.single_remaining_color_cell_rule import (
 from logicforge.plugins.cats.single_remaining_line_cell_rule import (
     SingleRemainingLineCellRule,
 )
+from logicforge.plugins.cats.tile_grid import (
+    CatsTileComponentDiagnostic,
+    CatsTileGridDetection,
+    CatsTileGridDetectionError,
+    CatsTileGridDetector,
+    CatsTileGridDiagnostics,
+)
 
 __all__ = [
     "AdjacentColorPairExclusionRule",
+    "CatsExistingCatCellDiagnostic",
+    "CatsExistingCatDetection",
+    "CatsExistingCatDetectionError",
+    "CatsExistingCatDetector",
+    "CatsExistingCatDiagnostics",
+    "CatsExistingCatObservation",
     "CatsParser",
     "CatsRuleCatalog",
     "CatsScreenPoint",
@@ -44,6 +65,11 @@ __all__ = [
     "CatsScreenStateDetection",
     "CatsScreenStateDetector",
     "CatsScreenStateDiagnostics",
+    "CatsTileComponentDiagnostic",
+    "CatsTileGridDetection",
+    "CatsTileGridDetectionError",
+    "CatsTileGridDetector",
+    "CatsTileGridDiagnostics",
     "ColorConfinedToLineRule",
     "ColorSubsetConfinedToLinesRule",
     "ImpossibleCatCandidateRule",
