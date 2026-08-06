@@ -10,9 +10,9 @@ domain models, deterministic rules, explainable state transitions, and replaceab
 infrastructure adapters.
 
 > [!IMPORTANT]
-> LogicForge is currently at the **v0.1 architecture milestone**. The repository
-> intentionally contains contracts and empty implementations only. It does not yet
-> parse screenshots, solve puzzles, or control input devices.
+> LogicForge currently provides the architecture, in-memory BlueStacks capture,
+> and classical puzzle-board localization. It does not yet detect grids or cells,
+> parse puzzles, solve rules, or control input devices.
 
 ## Architecture
 
@@ -40,7 +40,8 @@ responsibilities, and extension guidance.
 ## Planned features
 
 - Backend-neutral screenshot and image transport.
-- Replaceable board, grid, symbol, and color detectors.
+- A replaceable board detector with deterministic diagnostics and confidence.
+- Future grid, symbol, and color detector ports without implementations yet.
 - Immutable puzzle-neutral board, cell, candidate, and region models.
 - Deterministic rule evaluation with atomic state propagation.
 - Auditable deductions and presentation-neutral explanations.
@@ -102,7 +103,24 @@ BlueStacks must already be open, visible, and not minimized. The example script
 enables `debug=True`, so it additionally writes
 `artifacts/vision/bluestacks_capture.png` through OpenCV. Normal service calls use
 `debug=False` and perform no filesystem writes. The PNG is never reloaded into the
-pipeline. This milestone performs no board detection, parsing, or solving.
+pipeline. The capture command performs no board detection, parsing, or solving.
+
+## BlueStacks puzzle-board detection
+
+The OpenCV adapter consumes the captured in-memory `Screenshot`, evaluates
+scale-relative rectangular candidates, and returns a puzzle-neutral
+`BoardDetection`. To capture BlueStacks, detect the board, print diagnostics, and
+explicitly save an annotated overlay, run:
+
+```bash
+uv run python scripts/detect_bluestacks_board.py
+```
+
+The overlay is written to `artifacts/vision/board_detection.png`. Calling the
+detector normally never writes files. A missing or unreliable board raises a typed
+`BoardDetectionError` with candidate diagnostics instead of returning guessed
+coordinates. This milestone intentionally excludes grid detection, cell extraction,
+recognition, parsing, solving, and automation.
 
 ## Development
 
@@ -126,9 +144,10 @@ workflow requirements.
 uv run pytest
 ```
 
-The v0.1 tests validate package metadata, immutable domain contracts, and abstract
-boundaries. Future milestones will add fixture-based, property, integration, and
-end-to-end tests without relying on live game interfaces.
+The test suite validates architecture boundaries, immutable image transport,
+window ownership, synthetic board detection, deterministic selection, rejection
+rules, confidence bounds, and opt-in debug persistence. Tests never require a live
+BlueStacks process, desktop focus, monitor geometry, or network access.
 
 ## Contributing
 

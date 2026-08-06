@@ -1,0 +1,478 @@
+"""Classical OpenCV adapter for deterministic rectangular board localization."""
+
+from collections import Counter
+from dataclasses import replace
+from math import hypot
+from typing import cast
+
+import cv2
+import numpy as np
+from numpy.typing import NDArray
+
+from logicforge.config.settings import BoardDetectionSettings
+from logicforge.vision.board_detector import (
+    BoardCandidateDiagnostic,
+    BoardDetection,
+    BoardDetectionAnalysis,
+    BoardDetectionDiagnostics,
+    BoardDetectionError,
+    BoardDetector,
+)
+from logicforge.vision.screenshot import Screenshot
+
+
+def _clamp_unit(value: float) -> float:
+    """Clamp a floating-point scoring component into the inclusive unit interval."""
+
+    return max(0.0, min(1.0, value))
+
+
+def _triangular_score(
+    value: float,
+    minimum: float,
+    preferred: float,
+    maximum: float,
+) -> float:
+    """Score a value linearly toward one preferred point within accepted bounds."""
+
+    if value <= minimum or value >= maximum:
+        return 0.0
+    if value <= preferred:
+        return _clamp_unit((value - minimum) / (preferred - minimum))
+    return _clamp_unit((maximum - value) / (maximum - preferred))
+
+
+def _aspect_ratio_score(aspect_ratio: float, minimum: float, maximum: float) -> float:
+    """Score rectangular aspect ratio with a peak at a square ratio of one."""
+
+    if aspect_ratio <= 1.0:
+        return _clamp_unit((aspect_ratio - minimum) / (1.0 - minimum))
+    return _clamp_unit((maximum - aspect_ratio) / (maximum - 1.0))
+
+
+def _intersection_over_union(
+    first: BoardCandidateDiagnostic,
+    second: BoardCandidateDiagnostic,
+) -> float:
+    """Measure bounding-box overlap for deterministic duplicate suppression."""
+
+    intersection_left = max(first.x, second.x)
+    intersection_top = max(first.y, second.y)
+    intersection_right = min(first.x + first.width, second.x + second.width)
+    intersection_bottom = min(first.y + first.height, second.y + second.height)
+    intersection_width = max(0, intersection_right - intersection_left)
+    intersection_height = max(0, intersection_bottom - intersection_top)
+    intersection_area = intersection_width * intersection_height
+    first_area = first.width * first.height
+    second_area = second.width * second.height
+    union_area = first_area + second_area - intersection_area
+    return intersection_area / union_area if union_area else 0.0
+
+
+class OpenCvBoardDetector(BoardDetector):
+    """Locate a puzzle board through edges, thresholding, contours, and scoring.
+
+    Confidence is deterministic and uses five normalized components:
+    ``0.25 * area + 0.25 * rectangularity + 0.20 * aspect ratio +
+    0.15 * edge density + 0.15 * location``. Area and edge scores peak at their
+    configured preferred values; aspect peaks at 1.0; rectangularity is normalized
+    from its configured minimum to 1.0; location decreases linearly with normalized
+    distance from the configured content center.
+    """
+
+    def __init__(self, settings: BoardDetectionSettings | None = None) -> None:
+        """Receive all thresholds through one immutable typed settings record."""
+
+        self._settings = settings or BoardDetectionSettings()
+
+    def detect(self, screenshot: Screenshot) -> BoardDetection:
+        """Return the highest-confidence reliable rectangle."""
+
+        return self.analyze(screenshot).detection
+
+    def analyze(self, screenshot: Screenshot) -> BoardDetectionAnalysis:
+        """Detect a board and retain deterministic candidate diagnostics."""
+
+        grayscale = cv2.cvtColor(screenshot.image, cv2.COLOR_BGR2GRAY)
+        kernel_size = self._settings.gaussian_blur_kernel_size
+        blurred = cv2.GaussianBlur(grayscale, (kernel_size, kernel_size), 0)
+        edges = cast(
+            NDArray[np.uint8],
+            cv2.Canny(
+                blurred,
+                self._settings.canny_lower_threshold,
+                self._settings.canny_upper_threshold,
+            ),
+        )
+        _, thresholded = cv2.threshold(
+            blurred,
+            0,
+            255,
+            cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU,
+        )
+
+        morphology_kernel = self._create_morphology_kernel(
+            screenshot.width,
+            screenshot.height,
+        )
+        edge_envelope_kernel = self._create_relative_kernel(
+            screenshot.width,
+            screenshot.height,
+            self._settings.edge_envelope_kernel_relative_size,
+        )
+        edge_envelope = cv2.morphologyEx(
+            cv2.dilate(
+                edges,
+                edge_envelope_kernel,
+                iterations=self._settings.edge_envelope_iterations,
+            ),
+            cv2.MORPH_CLOSE,
+            edge_envelope_kernel,
+            iterations=self._settings.edge_envelope_iterations,
+        )
+        masks = (
+            cv2.morphologyEx(
+                edges,
+                cv2.MORPH_CLOSE,
+                morphology_kernel,
+                iterations=self._settings.morphology_iterations,
+            ),
+            cv2.morphologyEx(
+                thresholded,
+                cv2.MORPH_CLOSE,
+                morphology_kernel,
+                iterations=self._settings.morphology_iterations,
+            ),
+            edge_envelope,
+        )
+
+        contours: list[cv2.typing.MatLike] = []
+        for mask in masks:
+            mask_contours, _ = cv2.findContours(
+                mask,
+                cv2.RETR_LIST,
+                cv2.CHAIN_APPROX_SIMPLE,
+            )
+            contours.extend(mask_contours)
+
+        candidates = [
+            candidate
+            for contour in contours
+            if (
+                candidate := self._evaluate_contour(
+                    contour,
+                    edges,
+                    screenshot.width,
+                    screenshot.height,
+                )
+            )
+            is not None
+        ]
+        deduplicated_candidates = self._suppress_duplicates(candidates)
+        return self._select_detection(
+            contour_count=len(contours),
+            candidates=deduplicated_candidates,
+        )
+
+    def _create_morphology_kernel(self, width: int, height: int) -> NDArray[np.uint8]:
+        """Create an odd scale-relative closing kernel for the current resolution."""
+
+        return self._create_relative_kernel(
+            width,
+            height,
+            self._settings.morphology_kernel_relative_size,
+        )
+
+    @staticmethod
+    def _create_relative_kernel(
+        width: int,
+        height: int,
+        relative_kernel_size: float,
+    ) -> NDArray[np.uint8]:
+        """Build one odd rectangular kernel from a typed scale-relative setting."""
+
+        relative_size = min(width, height) * relative_kernel_size
+        kernel_size = max(3, round(relative_size))
+        if kernel_size % 2 == 0:
+            kernel_size += 1
+        return cast(
+            NDArray[np.uint8],
+            cv2.getStructuringElement(
+                cv2.MORPH_RECT,
+                (kernel_size, kernel_size),
+            ),
+        )
+
+    def _evaluate_contour(
+        self,
+        contour: cv2.typing.MatLike,
+        edges: NDArray[np.uint8],
+        screenshot_width: int,
+        screenshot_height: int,
+    ) -> BoardCandidateDiagnostic | None:
+        """Convert one sufficiently large contour into measurements and decisions."""
+
+        x, y, width, height = cv2.boundingRect(contour)
+        screenshot_area = screenshot_width * screenshot_height
+        bounding_area = width * height
+        diagnostic_area_floor = (
+            screenshot_area * self._settings.minimum_relative_area * 0.25
+        )
+        if bounding_area < diagnostic_area_floor:
+            return None
+
+        relative_area = bounding_area / screenshot_area
+        aspect_ratio = width / height
+        contour_area = abs(cv2.contourArea(contour))
+        rectangularity = _clamp_unit(contour_area / bounding_area)
+        perimeter = cv2.arcLength(contour, True)
+        approximation = cv2.approxPolyDP(
+            contour,
+            self._settings.polygon_epsilon_ratio * perimeter,
+            True,
+        )
+        edge_region = edges[y : y + height, x : x + width]
+        edge_density = cv2.countNonZero(edge_region) / bounding_area
+        location_score, inside_content = self._location_score(
+            x,
+            y,
+            width,
+            height,
+            screenshot_width,
+            screenshot_height,
+        )
+
+        rejection_reasons: list[str] = []
+        if not (
+            self._settings.minimum_relative_area
+            <= relative_area
+            <= self._settings.maximum_relative_area
+        ):
+            rejection_reasons.append("relative area outside configured range")
+        if not (
+            self._settings.minimum_aspect_ratio
+            <= aspect_ratio
+            <= self._settings.maximum_aspect_ratio
+        ):
+            rejection_reasons.append("implausible aspect ratio")
+        if rectangularity < self._settings.minimum_rectangularity:
+            rejection_reasons.append("insufficient rectangularity")
+        if edge_density < self._settings.minimum_edge_density:
+            rejection_reasons.append("insufficient edge strength")
+        if not inside_content:
+            rejection_reasons.append("outside BlueStacks content area")
+        if len(approximation) < 4:
+            rejection_reasons.append("contour is not a rectangular polygon")
+
+        confidence = self._confidence(
+            relative_area=relative_area,
+            aspect_ratio=aspect_ratio,
+            rectangularity=rectangularity,
+            edge_density=edge_density,
+            location_score=location_score,
+        )
+        return BoardCandidateDiagnostic(
+            x=x,
+            y=y,
+            width=width,
+            height=height,
+            relative_area=relative_area,
+            aspect_ratio=aspect_ratio,
+            rectangularity=rectangularity,
+            edge_density=edge_density,
+            location_score=location_score,
+            confidence=confidence,
+            accepted=not rejection_reasons,
+            rejection_reasons=tuple(rejection_reasons),
+        )
+
+    def _location_score(
+        self,
+        x: int,
+        y: int,
+        width: int,
+        height: int,
+        screenshot_width: int,
+        screenshot_height: int,
+    ) -> tuple[float, bool]:
+        """Score center proximity and reject title, toolbar, border, or clipped UI."""
+
+        left = screenshot_width * self._settings.border_exclusion
+        top = screenshot_height * max(
+            self._settings.border_exclusion,
+            self._settings.top_content_exclusion,
+        )
+        right = screenshot_width * (
+            1.0
+            - max(
+                self._settings.border_exclusion,
+                self._settings.right_toolbar_exclusion,
+            )
+        )
+        bottom = screenshot_height * (
+            1.0
+            - max(
+                self._settings.border_exclusion,
+                self._settings.bottom_content_exclusion,
+            )
+        )
+        inside_content = (
+            x >= left and y >= top and x + width <= right and y + height <= bottom
+        )
+
+        candidate_center_x = (x + width / 2.0) / screenshot_width
+        candidate_center_y = (y + height / 2.0) / screenshot_height
+        distance = hypot(
+            candidate_center_x - self._settings.expected_center_x,
+            candidate_center_y - self._settings.expected_center_y,
+        )
+        maximum_distance = hypot(1.0, 1.0)
+        return _clamp_unit(1.0 - distance / maximum_distance), inside_content
+
+    def _confidence(
+        self,
+        *,
+        relative_area: float,
+        aspect_ratio: float,
+        rectangularity: float,
+        edge_density: float,
+        location_score: float,
+    ) -> float:
+        """Combine documented normalized evidence into a deterministic confidence."""
+
+        area_score = _triangular_score(
+            relative_area,
+            self._settings.minimum_relative_area,
+            self._settings.preferred_relative_area,
+            self._settings.maximum_relative_area,
+        )
+        rectangularity_score = _clamp_unit(
+            (rectangularity - self._settings.minimum_rectangularity)
+            / (1.0 - self._settings.minimum_rectangularity)
+        )
+        aspect_score = _aspect_ratio_score(
+            aspect_ratio,
+            self._settings.minimum_aspect_ratio,
+            self._settings.maximum_aspect_ratio,
+        )
+        edge_score = _triangular_score(
+            edge_density,
+            self._settings.minimum_edge_density,
+            self._settings.preferred_edge_density,
+            self._settings.maximum_edge_density,
+        )
+        confidence = (
+            0.25 * area_score
+            + 0.25 * rectangularity_score
+            + 0.20 * aspect_score
+            + 0.15 * edge_score
+            + 0.15 * location_score
+        )
+        return _clamp_unit(confidence)
+
+    def _suppress_duplicates(
+        self,
+        candidates: list[BoardCandidateDiagnostic],
+    ) -> tuple[BoardCandidateDiagnostic, ...]:
+        """Mark overlapping contour duplicates while preserving diagnostic evidence."""
+
+        ordered = sorted(candidates, key=self._candidate_sort_key)
+        accepted_unique: list[BoardCandidateDiagnostic] = []
+        results: list[BoardCandidateDiagnostic] = []
+        for candidate in ordered:
+            is_duplicate = candidate.accepted and any(
+                _intersection_over_union(candidate, accepted)
+                >= self._settings.duplicate_iou_threshold
+                for accepted in accepted_unique
+            )
+            if is_duplicate:
+                results.append(
+                    replace(
+                        candidate,
+                        accepted=False,
+                        rejection_reasons=(
+                            *candidate.rejection_reasons,
+                            "duplicate candidate geometry",
+                        ),
+                    )
+                )
+                continue
+
+            results.append(candidate)
+            if candidate.accepted:
+                accepted_unique.append(candidate)
+        return tuple(results)
+
+    def _select_detection(
+        self,
+        *,
+        contour_count: int,
+        candidates: tuple[BoardCandidateDiagnostic, ...],
+    ) -> BoardDetectionAnalysis:
+        """Select the deterministic winner or raise an actionable typed error."""
+
+        accepted = tuple(candidate for candidate in candidates if candidate.accepted)
+        top_candidate = accepted[0] if accepted else None
+        competitive_count = (
+            sum(
+                top_candidate.confidence - candidate.confidence
+                <= self._settings.ambiguity_score_delta
+                for candidate in accepted
+            )
+            if top_candidate is not None
+            else 0
+        )
+        diagnostics = BoardDetectionDiagnostics(
+            contour_count=contour_count,
+            candidates=candidates,
+            selected_candidate=top_candidate,
+            competitive_candidate_count=competitive_count,
+        )
+
+        if top_candidate is None:
+            reason_counts = Counter(
+                reason
+                for candidate in candidates
+                for reason in candidate.rejection_reasons
+            )
+            reason_summary = ", ".join(
+                f"{reason}: {count}" for reason, count in sorted(reason_counts.items())
+            )
+            raise BoardDetectionError(
+                "No board candidate passed geometric filters. "
+                f"Contours: {contour_count}; retained candidates: {len(candidates)}; "
+                f"rejections: {reason_summary or 'none above diagnostic area floor'}.",
+                diagnostics,
+            )
+        if top_candidate.confidence < self._settings.minimum_confidence:
+            raise BoardDetectionError(
+                "Best board candidate was below the confidence threshold: "
+                f"{top_candidate.confidence:.3f} < "
+                f"{self._settings.minimum_confidence:.3f}. "
+                f"Competitive candidates: {competitive_count}.",
+                diagnostics,
+            )
+
+        detection = BoardDetection(
+            x=top_candidate.x,
+            y=top_candidate.y,
+            width=top_candidate.width,
+            height=top_candidate.height,
+            confidence=top_candidate.confidence,
+        )
+        return BoardDetectionAnalysis(detection=detection, diagnostics=diagnostics)
+
+    @staticmethod
+    def _candidate_sort_key(
+        candidate: BoardCandidateDiagnostic,
+    ) -> tuple[float, float, int, int, int, int]:
+        """Provide total deterministic ordering for tied or near-tied candidates."""
+
+        return (
+            -candidate.confidence,
+            -candidate.relative_area,
+            candidate.y,
+            candidate.x,
+            -candidate.width,
+            -candidate.height,
+        )

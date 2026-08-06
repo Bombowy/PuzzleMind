@@ -1,5 +1,12 @@
 """Ports and transfer objects for screenshot-to-board interpretation."""
 
+from logicforge.vision.board_detector import (
+    BoardDetection,
+    BoardDetectionAnalysis,
+    BoardDetectionDiagnostics,
+    BoardDetectionError,
+    BoardDetector,
+)
 from logicforge.vision.parser import PuzzleParser
 from logicforge.vision.screenshot import Screenshot
 from logicforge.vision.window_capture import (
@@ -9,6 +16,11 @@ from logicforge.vision.window_capture import (
 )
 
 __all__ = [
+    "BoardDetection",
+    "BoardDetectionAnalysis",
+    "BoardDetectionDiagnostics",
+    "BoardDetectionError",
+    "BoardDetector",
     "PuzzleParser",
     "Screenshot",
     "WindowBounds",

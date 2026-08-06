@@ -17,11 +17,17 @@ API reaches stability.
 - Typed capture ports, application service, debugging script, and milestone report.
 - Immutable in-memory BGR `Screenshot` backed by a read-only NumPy array.
 - Optional OpenCV debug export to `artifacts/vision/bluestacks_capture.png`.
+- Classical OpenCV puzzle-board detection behind the existing `BoardDetector` port.
+- Typed scale-relative board-detection settings, candidate diagnostics, and
+  `BoardDetectionError` failure reporting.
+- Explicit board overlay rendering to `artifacts/vision/board_detection.png`.
+- Synthetic detector and renderer tests that require no live desktop application.
 
 ### Changed
 
 - Refactored MSS capture to return pixels directly instead of encoding a PNG.
 - Made all disk output conditional on an explicit `debug=True` request.
+- Documented deterministic candidate filtering, scoring, and tie-breaking behavior.
 
 ## [0.1.0] - 2026-08-06
 

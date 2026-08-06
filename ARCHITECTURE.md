@@ -7,8 +7,9 @@ presentation, and operating-system side effects. The architecture is designed to
 support many puzzle families without turning the core solver into a collection of
 game-specific conditions.
 
-The v0.1 codebase contains contracts and data shapes only. Algorithms, adapters,
-and puzzle rules are deliberately deferred to their roadmap milestones.
+The codebase currently implements only in-memory BlueStacks capture and rectangular
+board localization. Grid recovery, visual interpretation, puzzle rules, solving,
+and automation remain deliberately deferred to later milestones.
 
 ## Architectural principles
 
@@ -131,9 +132,37 @@ those observations as domain entities.
 
 The public `Screenshot` owns a contiguous, read-only `numpy.ndarray` with an
 explicit `uint8` BGR contract. MSS converts native BGRA frames directly into this
-model; no component reloads an encoded file. OpenCV remains an outer-layer adapter
-used only for explicit debug persistence. Detection confidence and diagnostic
-artifacts will be first-class outputs before parsing algorithms are introduced.
+model; no component reloads an encoded file.
+
+`BoardDetector` is the inward-facing port. `OpenCvBoardDetector` is an
+infrastructure adapter that converts the BGR image to grayscale, applies Gaussian
+blur, combines Canny and Otsu-derived masks with morphological closing, extracts
+contours, and evaluates rectangular bounding boxes. A scale-relative dilated edge
+envelope joins the small visual gaps between adjacent board tiles without parsing
+the grid itself. Typed relative thresholds
+filter title-bar, border, side-toolbar, advertisement-like, button-sized, and
+geometrically implausible candidates without fixing coordinates to one resolution.
+
+Candidate confidence uses this deterministic formula:
+
+```text
+0.25 × area plausibility
++ 0.25 × rectangularity
++ 0.20 × aspect-ratio plausibility
++ 0.15 × edge-density plausibility
++ 0.15 × expected-location proximity
+```
+
+Every component is clamped to `[0.0, 1.0]`. Total ordering by confidence, area,
+position, and size resolves ties reproducibly. The selected result contains only
+puzzle-neutral geometry and confidence; diagnostics contain measurements and
+rejection reasons but no contours or OpenCV types. If no candidate is reliable,
+the adapter raises `BoardDetectionError` rather than returning a fabricated board.
+
+OpenCV debug rendering is a separate infrastructure concern. It copies the
+immutable source pixels and may draw selected and rejected candidates. Persistence
+occurs only through an explicit `debug=True` call, so ordinary detection has no
+filesystem side effects.
 
 ## Solver module
 
@@ -186,7 +215,7 @@ emergency stop before v0.7 can emit real input events.
 
 ## Future roadmap
 
-- **v0.2:** define parser diagnostics and implement screenshot detector adapters.
+- **v0.2:** extend screenshot interpretation beyond the implemented board locator.
 - **v0.3:** finalize validated board construction and indexed immutable snapshots.
 - **v0.4:** implement deterministic engine and atomic propagation.
 - **v0.5:** implement Cats parsing, constraints, rules, and fixture corpus.
