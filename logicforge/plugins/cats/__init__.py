@@ -10,6 +10,9 @@ from logicforge.plugins.cats.color_confined_to_line_rule import (
 from logicforge.plugins.cats.color_subset_confined_to_lines_rule import (
     ColorSubsetConfinedToLinesRule,
 )
+from logicforge.plugins.cats.impossible_cat_candidate_rule import (
+    ImpossibleCatCandidateRule,
+)
 from logicforge.plugins.cats.monochromatic_line_color_exclusion_rule import (
     MonochromaticLineColorExclusionRule,
 )
@@ -29,6 +32,7 @@ __all__ = [
     "CatsRuleCatalog",
     "ColorConfinedToLineRule",
     "ColorSubsetConfinedToLinesRule",
+    "ImpossibleCatCandidateRule",
     "MonochromaticLineColorExclusionRule",
     "SingleRemainingColorCellRule",
     "SingleRemainingLineCellRule",

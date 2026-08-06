@@ -43,6 +43,10 @@ API reaches stability.
   numeric color ordering, and `block_cell`-only mutations.
 - Stateless `ColorSubsetConfinedToLinesRule` reserving N rows or columns for N
   unresolved colors and atomically blocking other colors in those lines.
+- Stateless `ImpossibleCatCandidateRule` providing mutation-free one-step
+  failed-candidate checks as the final Cats deduction priority.
+- Pure `collect_cat_exclusion_coordinates` planning shared by `place_cat` and
+  hypothetical Cats candidate analysis.
 - Stateless `MonochromaticLineColorExclusionRule` for excluding a line's sole
   remaining color everywhere outside that row or column.
 - Stateless `AdjacentColorPairExclusionRule` for atomic perpendicular exclusions

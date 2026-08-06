@@ -6,6 +6,8 @@ import pytest
 
 from logicforge.core import Board, BoardStateError
 from logicforge.plugins.cats import block_cell, place_cat
+from logicforge.plugins.cats import board_actions as board_actions_module
+from logicforge.plugins.cats.board_actions import collect_cat_exclusion_coordinates
 from logicforge.vision.color_detector import (
     ColorDetectionDiagnostics,
     ColorDetectionResult,
@@ -58,6 +60,217 @@ def _matrix_values(board: Board) -> tuple[tuple[str, ...], ...]:
     """Freeze values only inside tests to assert all-or-nothing behavior."""
 
     return tuple(tuple(row) for row in board.cells)
+
+
+def _rectangular_board() -> Board:
+    """Build a 3x5 board for geometry-independent action-plan tests."""
+
+    values = (
+        ("C0", "C1", "C2", "C3", "C4"),
+        ("C5", "C0", "C6", "C7", "C8"),
+        ("C9", "C2", "C3", "C4", "C5"),
+    )
+    centers = tuple((20.0 + index * 10.0, 120.0, 130.0) for index in range(10))
+    observations = tuple(
+        ColorObservation(
+            row=row,
+            column=column,
+            color_id=color_id,
+            confidence=0.95,
+            representative_lab=centers[int(color_id[1:])],
+        )
+        for row, row_values in enumerate(values)
+        for column, color_id in enumerate(row_values)
+    )
+    result = ColorDetectionResult(
+        observations=observations,
+        color_count=10,
+        color_matrix=values,
+        mean_confidence=0.95,
+        diagnostics=ColorDetectionDiagnostics(
+            rows=3,
+            columns=5,
+            sample_inner_fraction=0.65,
+            cluster_distance_threshold=18.0,
+            sample_pixel_counts=(100,) * 15,
+            within_cell_spreads=(1.0,) * 15,
+            cluster_centers_lab=centers,
+            minimum_intercluster_distance=10.0,
+        ),
+    )
+    return Board(result)
+
+
+def test_collect_cat_exclusions_does_not_mutate_board() -> None:
+    """Keep the shared direct-consequence planner completely read-only."""
+
+    board = _board()
+    expected = _matrix_values(board)
+
+    collect_cat_exclusion_coordinates(board, 1, 1)
+
+    assert _matrix_values(board) == expected
+
+
+def test_collect_cat_exclusions_contains_other_same_color_cells() -> None:
+    """Include every other current coordinate carrying the target color ID."""
+
+    coordinates = collect_cat_exclusion_coordinates(_board(), 1, 1)
+
+    assert (0, 0) in coordinates
+
+
+def test_collect_cat_exclusions_contains_complete_remaining_row() -> None:
+    """Include the whole target row except for the hypothetical cat itself."""
+
+    coordinates = collect_cat_exclusion_coordinates(_board(), 1, 1)
+
+    assert {(1, 0), (1, 2), (1, 3)} <= set(coordinates)
+
+
+def test_collect_cat_exclusions_contains_complete_remaining_column() -> None:
+    """Include the whole target column except for the hypothetical cat itself."""
+
+    coordinates = collect_cat_exclusion_coordinates(_board(), 1, 1)
+
+    assert {(0, 1), (2, 1), (3, 1)} <= set(coordinates)
+
+
+def test_collect_cat_exclusions_contains_all_eight_existing_neighbors() -> None:
+    """Include every orthogonal and diagonal neighbor of an interior target."""
+
+    coordinates = collect_cat_exclusion_coordinates(_board(), 1, 1)
+    neighbors = {
+        (0, 0),
+        (0, 1),
+        (0, 2),
+        (1, 0),
+        (1, 2),
+        (2, 0),
+        (2, 1),
+        (2, 2),
+    }
+
+    assert neighbors <= set(coordinates)
+
+
+def test_collect_cat_exclusions_omits_target() -> None:
+    """Never include the coordinate that would receive the hypothetical K."""
+
+    assert (1, 1) not in collect_cat_exclusion_coordinates(_board(), 1, 1)
+
+
+def test_collect_cat_exclusions_deduplicates_overlapping_reasons() -> None:
+    """Represent a coordinate once even when color, row, column, or neighbor overlap."""
+
+    coordinates = collect_cat_exclusion_coordinates(_board(), 1, 1)
+
+    assert len(coordinates) == len(set(coordinates))
+
+
+def test_collect_cat_exclusions_are_sorted_row_major() -> None:
+    """Provide stable ordering for both real placement and hypothetical analysis."""
+
+    coordinates = collect_cat_exclusion_coordinates(_board(), 1, 1)
+
+    assert coordinates == tuple(sorted(coordinates))
+
+
+def test_collect_cat_exclusions_clip_board_edges() -> None:
+    """Omit nonexistent neighbors without allowing negative index wraparound."""
+
+    board = _board()
+    coordinates = collect_cat_exclusion_coordinates(board, 0, 0)
+
+    assert all(
+        0 <= row < len(board.cells) and 0 <= column < len(board.cells[row])
+        for row, column in coordinates
+    )
+    assert (-1, 0) not in coordinates
+    assert (0, -1) not in coordinates
+
+
+def test_collect_cat_exclusions_support_rectangular_board() -> None:
+    """Derive row and column consequences without assuming square geometry."""
+
+    board = _rectangular_board()
+    coordinates = collect_cat_exclusion_coordinates(board, 1, 1)
+
+    assert {(1, 0), (1, 2), (1, 3), (1, 4)} <= set(coordinates)
+    assert {(0, 1), (2, 1)} <= set(coordinates)
+
+
+def test_collect_cat_exclusions_include_existing_x_and_k_coordinates() -> None:
+    """Plan geometry independently from terminal values later validated by callers."""
+
+    board = _board()
+    board.set_blocked(1, 0)
+    board.set_cat(3, 1)
+
+    coordinates = collect_cat_exclusion_coordinates(board, 1, 1)
+
+    assert (1, 0) in coordinates
+    assert (3, 1) in coordinates
+
+
+def test_collect_cat_exclusions_preserve_unknown_cat_and_blocked_values() -> None:
+    """Do not alter any state category while constructing a hypothetical plan."""
+
+    board = _board()
+    board.set_blocked(1, 0)
+    board.set_cat(3, 1)
+    expected = _matrix_values(board)
+
+    collect_cat_exclusion_coordinates(board, 1, 1)
+
+    assert _matrix_values(board) == expected
+
+
+@pytest.mark.parametrize("terminal_value", ("K", "X", "INVALID"))
+def test_collect_cat_exclusions_reject_invalid_target_without_mutation(
+    terminal_value: str,
+) -> None:
+    """Require an unresolved C<n> target and preserve every invalid input state."""
+
+    board = _board()
+    board.cells[1][1] = terminal_value
+    expected = _matrix_values(board)
+
+    with pytest.raises(BoardStateError):
+        collect_cat_exclusion_coordinates(board, 1, 1)
+
+    assert _matrix_values(board) == expected
+
+
+def test_place_cat_uses_shared_exclusion_coordinate_collector(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep real placement and lookahead on the same direct-consequence plan."""
+
+    board = _board()
+    calls: list[tuple[int, int]] = []
+
+    def fake_collector(
+        target_board: Board,
+        row: int,
+        column: int,
+    ) -> tuple[tuple[int, int], ...]:
+        """Record delegation and expose one safely blockable coordinate."""
+
+        assert target_board is board
+        calls.append((row, column))
+        return ((0, 1),)
+
+    monkeypatch.setattr(
+        board_actions_module,
+        "collect_cat_exclusion_coordinates",
+        fake_collector,
+    )
+
+    assert place_cat(board, 1, 1) is True
+    assert calls == [(1, 1)]
+    assert board.is_blocked(0, 1)
+    assert board.is_unknown(1, 0)
 
 
 def test_place_cat_changes_selected_color_to_cat() -> None:

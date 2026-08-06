@@ -26,12 +26,10 @@ def place_cat(board: Board, row: int, column: int) -> bool:
             f"Cell ({row}, {column}) contains invalid board value: {current!r}."
         )
 
-    color_id = current
-    blocked_coordinates = _collect_blocked_coordinates(
+    blocked_coordinates = collect_cat_exclusion_coordinates(
         board,
         row,
         column,
-        color_id,
     )
     _validate_no_cat_conflicts(
         board,
@@ -66,36 +64,58 @@ def block_cell(board: Board, row: int, column: int) -> bool:
     return True
 
 
-def _collect_blocked_coordinates(
+def collect_cat_exclusion_coordinates(
     board: Board,
-    cat_row: int,
-    cat_column: int,
-    color_id: str,
+    row: int,
+    column: int,
 ) -> tuple[CellCoordinates, ...]:
-    """Build one deterministic union of all direct Cats exclusion coordinates."""
+    """Return the direct exclusion plan for an unresolved hypothetical cat.
+
+    The pure helper centralizes the exact color, row, column, and eight-neighbor
+    geometry used by ``place_cat``. It validates the target, reads the current
+    board without mutating it, excludes the target itself, removes duplicate
+    coordinates, and returns the plan in deterministic row-major order.
+    """
+
+    color_id = board.get(row, column)
+    if board.is_cat(row, column):
+        raise BoardStateError(
+            f"Cell ({row}, {column}) is already a confirmed cat and has no "
+            "hypothetical exclusion plan."
+        )
+    if board.is_blocked(row, column):
+        raise BoardStateError(
+            f"Cell ({row}, {column}) is already blocked and cannot become a cat."
+        )
+    if not board.is_unknown(row, column):
+        raise BoardStateError(
+            f"Cell ({row}, {column}) contains invalid board value: {color_id!r}."
+        )
 
     coordinates: set[CellCoordinates] = set()
-    target = (cat_row, cat_column)
+    target = (row, column)
 
-    for row, values in enumerate(board.cells):
-        for column in range(len(values)):
-            if (row, column) != target and board.get(row, column) == color_id:
-                coordinates.add((row, column))
+    for candidate_row, values in enumerate(board.cells):
+        for candidate_column in range(len(values)):
+            if (candidate_row, candidate_column) != target and board.get(
+                candidate_row, candidate_column
+            ) == color_id:
+                coordinates.add((candidate_row, candidate_column))
 
-    for column in range(len(board.cells[cat_row])):
-        if (cat_row, column) != target:
-            coordinates.add((cat_row, column))
+    for candidate_column in range(len(board.cells[row])):
+        if (row, candidate_column) != target:
+            coordinates.add((row, candidate_column))
 
-    for row, values in enumerate(board.cells):
-        if cat_column < len(values) and (row, cat_column) != target:
-            coordinates.add((row, cat_column))
+    for candidate_row, values in enumerate(board.cells):
+        if column < len(values) and (candidate_row, column) != target:
+            coordinates.add((candidate_row, column))
 
     for row_offset in (-1, 0, 1):
-        neighbor_row = cat_row + row_offset
+        neighbor_row = row + row_offset
         if not 0 <= neighbor_row < len(board.cells):
             continue
         for column_offset in (-1, 0, 1):
-            neighbor_column = cat_column + column_offset
+            neighbor_column = column + column_offset
             if (neighbor_row, neighbor_column) != target and 0 <= neighbor_column < len(
                 board.cells[neighbor_row]
             ):

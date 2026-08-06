@@ -119,7 +119,7 @@ def _simple_board() -> Board:
     return _board_from_values((("C0", "C1"), ("C2", "C3")))
 
 
-def test_default_rule_order_contains_all_six_cats_rules() -> None:
+def test_default_rule_order_contains_all_seven_cats_rules() -> None:
     """Keep the explicit Cats priority independent from import or registry order."""
 
     assert tuple(type(rule).__name__ for rule in DEFAULT_CATS_RULES) == (
@@ -129,6 +129,7 @@ def test_default_rule_order_contains_all_six_cats_rules() -> None:
         "ColorSubsetConfinedToLinesRule",
         "AdjacentColorPairExclusionRule",
         "ColorConfinedToLineRule",
+        "ImpossibleCatCandidateRule",
     )
 
 
@@ -151,6 +152,49 @@ def test_color_subset_rule_has_required_priority() -> None:
     assert rule_names.index("MonochromaticLineColorExclusionRule") < subset_index
     assert subset_index < rule_names.index("AdjacentColorPairExclusionRule")
     assert subset_index < rule_names.index("ColorConfinedToLineRule")
+
+
+def test_impossible_candidate_rule_is_last_and_after_cheaper_rules() -> None:
+    """Keep one-step lookahead behind every direct deterministic deduction."""
+
+    rule_names = tuple(type(rule).__name__ for rule in DEFAULT_CATS_RULES)
+    lookahead_index = rule_names.index("ImpossibleCatCandidateRule")
+
+    assert lookahead_index == len(rule_names) - 1
+    assert rule_names.index("ColorSubsetConfinedToLinesRule") < lookahead_index
+    assert rule_names.index("AdjacentColorPairExclusionRule") < lookahead_index
+    assert rule_names.index("ColorConfinedToLineRule") < lookahead_index
+
+
+def test_last_lookahead_success_restarts_from_first_rule() -> None:
+    """Restart at the highest priority after the seventh rule blocks one cell."""
+
+    calls: list[str] = []
+    rule_names = (
+        "SingleRemainingColorCellRule",
+        "SingleRemainingLineCellRule",
+        "MonochromaticLineColorExclusionRule",
+        "ColorSubsetConfinedToLinesRule",
+        "AdjacentColorPairExclusionRule",
+        "ColorConfinedToLineRule",
+    )
+    rules = (
+        *(_ScriptedRule(name, (False, False), calls) for name in rule_names),
+        _ScriptedRule(
+            "ImpossibleCatCandidateRule",
+            (True, False),
+            calls,
+        ),
+    )
+
+    successful_applications = apply_cats_rules_until_stalled(
+        _simple_board(),
+        rules=rules,
+    )
+
+    assert successful_applications == 1
+    assert calls[:7] == [*rule_names, "ImpossibleCatCandidateRule"]
+    assert calls[7] == "SingleRemainingColorCellRule"
 
 
 def test_all_false_rules_return_zero() -> None:
