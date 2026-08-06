@@ -65,6 +65,26 @@ class CatClickTarget:
     desktop_y: int
 
 
+@dataclass(frozen=True, slots=True)
+class CatsBoardInput:
+    """Retain immutable vision output required to solve one captured Cats board."""
+
+    detected_board: BoardDetection
+    grid: GridDetection
+    color_result: ColorDetectionResult
+
+
+@dataclass(frozen=True, slots=True)
+class CatsSolvedBoard:
+    """Retain one logical solve result and its deterministic click plan."""
+
+    board_input: CatsBoardInput
+    logical_board: Board
+    successful_applications: int
+    click_plan: tuple[CatClickTarget, ...]
+    status: str
+
+
 type SleepFunction = Callable[[float], None]
 
 
@@ -216,6 +236,53 @@ def build_cat_click_plan(
     )
 
 
+def analyze_captured_cats_board(screenshot: Screenshot) -> CatsBoardInput:
+    """Detect board, grid, and immutable colors without creating a logical Board."""
+
+    board_settings = BoardDetectionSettings()
+    detected_board = OpenCvBoardDetector(board_settings).detect(screenshot)
+    grid = OpenCvGridDetector(board_settings).detect(screenshot, detected_board)
+    color_result = OpenCvColorDetector(ColorDetectionSettings()).detect(
+        screenshot,
+        grid,
+    )
+    return CatsBoardInput(
+        detected_board=detected_board,
+        grid=grid,
+        color_result=color_result,
+    )
+
+
+def solve_analyzed_cats_board(
+    window: WindowInfo,
+    board_input: CatsBoardInput,
+) -> CatsSolvedBoard:
+    """Create and solve one Board once, then build one final click plan."""
+
+    logical_board = Board(board_input.color_result)
+    successful_applications = apply_cats_rules_until_stalled(logical_board)
+    click_plan = build_cat_click_plan(logical_board, board_input.grid, window)
+    return CatsSolvedBoard(
+        board_input=board_input,
+        logical_board=logical_board,
+        successful_applications=successful_applications,
+        click_plan=click_plan,
+        status=classify_result(logical_board),
+    )
+
+
+def solve_captured_cats_board(
+    window: WindowInfo,
+    screenshot: Screenshot,
+) -> CatsSolvedBoard:
+    """Compose immutable vision analysis with exactly one logical solve."""
+
+    return solve_analyzed_cats_board(
+        window,
+        analyze_captured_cats_board(screenshot),
+    )
+
+
 def print_cat_click_plan(targets: tuple[CatClickTarget, ...]) -> None:
     """Print a dry-run plan without invoking any mouse or automation API."""
 
@@ -306,40 +373,23 @@ def main(arguments: Sequence[str] | None = None) -> int:
         print(f"BlueStacks capture failed: {error}", file=sys.stderr)
         return 1
 
-    board_settings = BoardDetectionSettings()
     try:
-        detected_board = OpenCvBoardDetector(board_settings).detect(screenshot)
+        board_input = analyze_captured_cats_board(screenshot)
     except BoardDetectionError as error:
         print(f"Board detection failed: {error}", file=sys.stderr)
         return 2
-
-    try:
-        grid = OpenCvGridDetector(board_settings).detect(
-            screenshot,
-            detected_board,
-        )
     except GridDetectionError as error:
         print(f"Grid detection failed: {error}", file=sys.stderr)
         return 3
-
-    try:
-        color_result = OpenCvColorDetector(ColorDetectionSettings()).detect(
-            screenshot,
-            grid,
-        )
     except ColorDetectionError as error:
         print(f"Color detection failed: {error}", file=sys.stderr)
         return 4
 
-    logical_board = Board(color_result)
     try:
-        successful_applications = apply_cats_rules_until_stalled(logical_board)
+        solved = solve_analyzed_cats_board(window, board_input)
     except BoardStateError as error:
         print(f"Cats deduction failed: {error}", file=sys.stderr)
         return 5
-
-    try:
-        click_plan = build_cat_click_plan(logical_board, grid, window)
     except CatClickPlanError as error:
         print(f"Cats click-plan mapping failed: {error}", file=sys.stderr)
         return 6
@@ -347,23 +397,23 @@ def main(arguments: Sequence[str] | None = None) -> int:
     print_solve_information(
         window,
         screenshot,
-        detected_board,
-        grid,
-        color_result,
-        logical_board,
-        successful_applications,
+        solved.board_input.detected_board,
+        solved.board_input.grid,
+        solved.board_input.color_result,
+        solved.logical_board,
+        solved.successful_applications,
     )
-    print_cat_click_plan(click_plan)
+    print_cat_click_plan(solved.click_plan)
 
     if not parsed_arguments.execute_clicks:
         return 0
-    if not click_plan:
+    if not solved.click_plan:
         print("Executed cat double-click targets: 0")
         return 0
 
     try:
         executed_targets = execute_cat_click_plan(
-            click_plan,
+            solved.click_plan,
             Win32MouseController(),
             click_delay_seconds=parsed_arguments.click_delay_ms / 1000.0,
         )

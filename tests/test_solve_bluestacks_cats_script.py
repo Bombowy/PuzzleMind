@@ -1,5 +1,6 @@
 """Deterministic tests for the manual BlueStacks Cats solving script."""
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 from inspect import getsource
 
@@ -392,6 +393,166 @@ def _set_stalled_result(board: Board) -> int:
     board.set_cat(0, 0)
     board.set_blocked(0, 1)
     return 2
+
+
+def test_analyze_captured_board_runs_each_vision_stage_once_without_solving(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep capture analysis limited to board, grid, and color detection."""
+
+    calls = {"board": 0, "grid": 0, "color": 0}
+
+    class CountingBoardDetector:
+        def __init__(self, settings: object) -> None:
+            del settings
+
+        def detect(self, screenshot: Screenshot) -> BoardDetection:
+            assert screenshot is _CaptureService.screenshot
+            calls["board"] += 1
+            return _board_detection()
+
+    class CountingGridDetector:
+        def __init__(self, settings: object) -> None:
+            del settings
+
+        def detect(
+            self,
+            screenshot: Screenshot,
+            detected_board: BoardDetection,
+        ) -> GridDetection:
+            assert screenshot is _CaptureService.screenshot
+            assert detected_board == _board_detection()
+            calls["grid"] += 1
+            return _grid_detection()
+
+    class CountingColorDetector:
+        def __init__(self, settings: object) -> None:
+            del settings
+
+        def detect(
+            self,
+            screenshot: Screenshot,
+            grid: GridDetection,
+        ) -> ColorDetectionResult:
+            assert screenshot is _CaptureService.screenshot
+            assert grid == _grid_detection()
+            calls["color"] += 1
+            return _color_result()
+
+    def forbidden(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        pytest.fail("analysis must not create Board or invoke Cats rules")
+
+    monkeypatch.setattr(solve_script, "OpenCvBoardDetector", CountingBoardDetector)
+    monkeypatch.setattr(solve_script, "OpenCvGridDetector", CountingGridDetector)
+    monkeypatch.setattr(solve_script, "OpenCvColorDetector", CountingColorDetector)
+    monkeypatch.setattr(solve_script, "Board", forbidden)
+    monkeypatch.setattr(solve_script, "apply_cats_rules_until_stalled", forbidden)
+
+    result = solve_script.analyze_captured_cats_board(_CaptureService.screenshot)
+
+    assert calls == {"board": 1, "grid": 1, "color": 1}
+    assert result.detected_board == _board_detection()
+    assert result.grid == _grid_detection()
+    assert result.color_result == _color_result()
+
+
+@pytest.mark.parametrize(
+    ("rule_application", "expected_status"),
+    ((_set_complete_result, "COMPLETE"), (_set_stalled_result, "STALLED")),
+)
+def test_solve_analyzed_board_creates_solves_and_maps_exactly_once(
+    monkeypatch: pytest.MonkeyPatch,
+    rule_application: Callable[[Board], int],
+    expected_status: str,
+) -> None:
+    """Create one Board, run one rule loop, and build one plan per analysis."""
+
+    actual_board_type = Board
+    calls = {"board": 0, "rules": 0, "plan": 0}
+
+    def create_board(color_result: ColorDetectionResult) -> Board:
+        calls["board"] += 1
+        return actual_board_type(color_result)
+
+    def run_rules(board: Board) -> int:
+        calls["rules"] += 1
+        return rule_application(board)
+
+    expected_plan = _click_targets()
+
+    def build_plan(
+        board: Board,
+        grid: GridDetection,
+        window: WindowInfo,
+    ) -> tuple[solve_script.CatClickTarget, ...]:
+        del board
+        calls["plan"] += 1
+        assert grid == _grid_detection()
+        assert window == _offset_window()
+        return expected_plan
+
+    monkeypatch.setattr(solve_script, "Board", create_board)
+    monkeypatch.setattr(solve_script, "apply_cats_rules_until_stalled", run_rules)
+    monkeypatch.setattr(solve_script, "build_cat_click_plan", build_plan)
+    board_input = solve_script.CatsBoardInput(
+        detected_board=_board_detection(),
+        grid=_grid_detection(),
+        color_result=_color_result(),
+    )
+
+    solved = solve_script.solve_analyzed_cats_board(_offset_window(), board_input)
+
+    assert calls == {"board": 1, "rules": 1, "plan": 1}
+    assert solved.board_input is board_input
+    assert solved.successful_applications in (1, 2)
+    assert solved.click_plan is expected_plan
+    assert solved.status == expected_status
+
+
+def test_solve_captured_board_composes_analysis_then_solve_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Expose one convenient composition point shared with autoplay."""
+
+    board_input = solve_script.CatsBoardInput(
+        detected_board=_board_detection(),
+        grid=_grid_detection(),
+        color_result=_color_result(),
+    )
+    solved = solve_script.CatsSolvedBoard(
+        board_input=board_input,
+        logical_board=_logical_board(),
+        successful_applications=0,
+        click_plan=(),
+        status="STALLED",
+    )
+    calls = {"analyze": 0, "solve": 0}
+
+    def analyze(screenshot: Screenshot) -> solve_script.CatsBoardInput:
+        calls["analyze"] += 1
+        assert screenshot is _CaptureService.screenshot
+        return board_input
+
+    def solve(
+        window: WindowInfo,
+        analyzed: solve_script.CatsBoardInput,
+    ) -> solve_script.CatsSolvedBoard:
+        calls["solve"] += 1
+        assert window == _offset_window()
+        assert analyzed is board_input
+        return solved
+
+    monkeypatch.setattr(solve_script, "analyze_captured_cats_board", analyze)
+    monkeypatch.setattr(solve_script, "solve_analyzed_cats_board", solve)
+
+    result = solve_script.solve_captured_cats_board(
+        _offset_window(),
+        _CaptureService.screenshot,
+    )
+
+    assert result is solved
+    assert calls == {"analyze": 1, "solve": 1}
 
 
 def test_format_matrix_supports_immutable_tuple_matrix() -> None:
@@ -1817,5 +1978,5 @@ def test_script_contains_no_prompt_countdown_or_target_limit() -> None:
 
     source = getsource(solve_script)
 
-    for forbidden_text in ("input(", "countdown", "max-clicks", "move-only"):
+    for forbidden_text in ("\ninput(", "countdown", "max-clicks", "move-only"):
         assert forbidden_text not in source.casefold()

@@ -67,6 +67,13 @@ API reaches stability.
   detectors for normal gameplay screens.
 - Diagnostic screenshot-space action points and a no-click
   `detect_bluestacks_cats_screen_state.py` script with an explicit debug overlay.
+- Optional `autoplay_bluestacks_cats.py` state machine for continuous `BOARD`,
+  optional `RANKING`, mandatory `LEVEL_COMPLETE`, and passive `UNKNOWN` handling.
+- Complete pre-click Cats solution validation across rows, columns, original
+  colors, non-touching cats, terminal cells, and exact duplicate-free click plans.
+- Bounded transition polling, stationary-overlay retries, stale-board fingerprint
+  protection, pre-action window-bounds checks, `--max-levels`, Ctrl+C summaries,
+  and a single-capture no-click autoplay dry run.
 
 ### Changed
 
@@ -82,6 +89,11 @@ API reaches stability.
 - Extended debug overlays with detected separators and grid diagnostics.
 - Shared one internal grid-analysis and mandatory-validation path between board
   acceptance and public grid geometry extraction.
+- Refactored the one-shot Cats solver into reusable capture analysis and logical
+  solve functions without changing its CLI, exit codes, output, or click behavior.
+- Autoplay retains the existing row-major double left click per `K` with a 10 ms
+  default delay, while ranking and level-complete overlays receive one left click;
+  `STALLED` and validation failures stop before any board click.
 
 ### Fixed
 
