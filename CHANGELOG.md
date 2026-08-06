@@ -39,6 +39,10 @@ API reaches stability.
   most one atomic `place_cat` action per `apply()` call.
 - Stateless `ColorConfinedToLineRule` with atomic row/column exclusion planning,
   numeric color ordering, and `block_cell`-only mutations.
+- Stateless `AdjacentColorPairExclusionRule` for atomic perpendicular exclusions
+  around exactly two orthogonally adjacent candidates of one color.
+- Minimal `apply_cats_rules_until_stalled` fixed-point loop that restarts the
+  ordered Cats rules after every successful application.
 
 ### Changed
 
