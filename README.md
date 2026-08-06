@@ -89,6 +89,19 @@ uv sync --locked --all-groups
 
 The committed lockfile gives local development and CI the same dependency graph.
 
+## BlueStacks window capture
+
+The first Windows capture milestone can save the visible BlueStacks App Player
+window for debugging:
+
+```bash
+uv run python scripts/capture_bluestacks.py
+```
+
+BlueStacks must already be open, visible, and not minimized. The command captures
+only that window rectangle and writes `artifacts/vision/bluestacks_capture.png`.
+It does not perform board detection, image analysis, parsing, or solving.
+
 ## Development
 
 Run all quality tools through `uv` so they use the managed environment:

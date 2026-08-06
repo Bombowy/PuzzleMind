@@ -46,3 +46,4 @@ site/
 
 # Generated repository export for external code analysis
 /codebase_for_analysis.txt
+/wynik.txt

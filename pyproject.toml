@@ -19,7 +19,10 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
   "Typing :: Typed",
 ]
-dependencies = []
+dependencies = [
+  "mss>=10.2.0,<11",
+  "pywin32>=312,<313; sys_platform == 'win32'",
+]
 
 [project.urls]
 Homepage = "https://github.com/Bombowy/PuzzleMind"
@@ -34,6 +37,7 @@ dev = [
   "pytest>=8.3.0,<10",
   "pytest-cov>=6.0.0,<8",
   "ruff>=0.11.0,<0.15",
+  "types-pywin32>=312.0.0.20260609,<313",
 ]
 
 [tool.uv.build-backend]
@@ -47,6 +51,7 @@ source-include = [
   "ROADMAP.md",
   "docs/**",
   "examples/**",
+  "scripts/**",
   "tests/**",
 ]
 

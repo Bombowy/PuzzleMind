@@ -11,6 +11,12 @@ API reaches stability.
 
 - Screenshot parsing contracts and diagnostics for v0.2.
 
+### Added
+
+- Windows-only BlueStacks App Player lookup through pywin32.
+- Rectangle-only MSS capture to `artifacts/vision/bluestacks_capture.png`.
+- Typed capture ports, application service, debugging script, and milestone report.
+
 ## [0.1.0] - 2026-08-06
 
 ### Added
