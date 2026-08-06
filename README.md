@@ -154,6 +154,14 @@ or non-positive cells raise `GridDetectionError` without returning partial geome
 This milestone does not recognize colors, cats, symbols, or text and does not build
 domain boards or solve puzzles.
 
+### Troubleshooting small BlueStacks windows
+
+If board or grid detection fails at a very small BlueStacks size, enlarge the
+emulator window and retry. A captured resolution of at least approximately
+440x470 is recommended. This is a practical operational recommendation, not a
+guaranteed universal minimum or a detector acceptance limit; detection is still
+attempted below this size.
+
 ## Development
 
 Run all quality tools through `uv` so they use the managed environment:

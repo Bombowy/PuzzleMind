@@ -26,6 +26,44 @@ from logicforge.vision.window_capture import (
 
 DEBUG: Final = True
 DEBUG_OUTPUT_PATH: Final = Path("artifacts/vision/grid_detection.png")
+MIN_RECOMMENDED_SCREENSHOT_WIDTH: Final[int] = 440
+MIN_RECOMMENDED_SCREENSHOT_HEIGHT: Final[int] = 470
+
+
+def is_screenshot_below_recommended_size(screenshot: Screenshot) -> bool:
+    """Return whether either dimension is below the operational recommendation.
+
+    This check is intentionally advisory: callers still run both detectors, and
+    these values never participate in board or grid acceptance decisions.
+    """
+
+    return (
+        screenshot.width < MIN_RECOMMENDED_SCREENSHOT_WIDTH
+        or screenshot.height < MIN_RECOMMENDED_SCREENSHOT_HEIGHT
+    )
+
+
+def build_small_screenshot_recommendation(screenshot: Screenshot) -> str | None:
+    """Build a cautious resizing recommendation for a failed detection attempt."""
+
+    if not is_screenshot_below_recommended_size(screenshot):
+        return None
+    return (
+        "BlueStacks window may be too small for reliable detection.\n"
+        "Enlarge the BlueStacks window and try again.\n"
+        f"Captured resolution: {screenshot.width}x{screenshot.height}.\n"
+        "Recommended minimum: "
+        f"{MIN_RECOMMENDED_SCREENSHOT_WIDTH}x"
+        f"{MIN_RECOMMENDED_SCREENSHOT_HEIGHT}."
+    )
+
+
+def print_small_screenshot_recommendation(screenshot: Screenshot) -> None:
+    """Print the advisory only when the captured image is below recommendation."""
+
+    recommendation = build_small_screenshot_recommendation(screenshot)
+    if recommendation is not None:
+        print(recommendation, file=sys.stderr)
 
 
 def print_detection_information(
@@ -77,6 +115,7 @@ def main() -> int:
         board = board_detector.detect(screenshot)
     except BoardDetectionError as error:
         print(f"Board detection failed: {error}", file=sys.stderr)
+        print_small_screenshot_recommendation(screenshot)
         return 2
     board_elapsed_seconds = perf_counter() - board_started_at
 
@@ -97,6 +136,7 @@ def main() -> int:
             f"Grid detection failed after {grid_elapsed_seconds:.4f} seconds: {error}",
             file=sys.stderr,
         )
+        print_small_screenshot_recommendation(screenshot)
         if DEBUG:
             print(
                 f"Rejected diagnostics saved to: {DEBUG_OUTPUT_PATH.as_posix()}",

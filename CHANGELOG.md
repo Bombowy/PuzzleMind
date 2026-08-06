@@ -27,6 +27,8 @@ API reaches stability.
 - Public `OpenCvGridDetector`, immutable `GridDetection`/`CellBounds` models, typed
   diagnostics/errors, and full-screenshot half-open coordinate semantics.
 - Deterministic row-major cell generation and explicit grid debug rendering/script.
+- Post-failure BlueStacks resizing guidance when a captured screenshot is below
+  the operational 440x470 recommendation.
 
 ### Changed
 
