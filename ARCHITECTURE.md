@@ -253,6 +253,17 @@ states accept an identical idempotent assignment but reject the opposite state
 with `BoardStateError`; validation occurs before assignment, so a conflict cannot
 partially mutate the board.
 
+Cats-specific direct consequences live in `plugins.cats.board_actions`, outside
+the puzzle-neutral `Board`. `place_cat()` captures the target color before setting
+`K`, computes the deterministic union of same-color, row, column, and eight-neighbor
+coordinates, and validates every planned `X` before the first mutation. Only after
+that validation does it call `Board.set_cat()` and `Board.set_blocked()`. Existing
+`X` values are preserved; any planned `K` or invalid value rejects the whole plan.
+This plan-then-apply structure provides atomicity without a rollback copy. The
+separate `block_cell()` action delegates one idempotent exclusion to `Board` and
+does not propagate. These are operations for future rules, not rule classes or a
+solver engine.
+
 ## Solver module
 
 The solver is an application use case, not a collection of puzzle rules. It will

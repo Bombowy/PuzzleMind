@@ -33,6 +33,8 @@ API reaches stability.
   puzzle-neutral color-detection settings.
 - Classical OpenCV LAB cell sampling, deterministic complete-link color grouping,
   full capture-to-color script, and explicit labeled debug overlay.
+- Cats-specific atomic `place_cat` propagation across color, row, column, and
+  neighbors, plus a non-propagating idempotent `block_cell` action.
 
 ### Changed
 

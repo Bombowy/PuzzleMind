@@ -189,6 +189,17 @@ region objects, or a parallel state matrix after mutations. `K` and `X` are fina
 setting the same value again is idempotent, while `K -> X` or `X -> K` raises
 `BoardStateError` before any cell is changed.
 
+### Cats board actions
+
+The Cats plugin exposes two small operations over that same matrix. `place_cat()`
+changes one unresolved `C<n>` to `K`, then blocks every other unresolved cell of
+the same color, row, column, and eight-neighbor area. It first builds and validates
+the complete exclusion plan; an existing conflicting cat raises `BoardStateError`
+before any write, so no partial propagation remains. Repeating the same cat is an
+idempotent `False` result. `block_cell()` changes exactly one unresolved cell to
+`X` and deliberately triggers no additional propagation. Neither operation writes
+to `board.cells` directly or creates a second matrix, snapshot, rule, or solver.
+
 ### Troubleshooting small BlueStacks windows
 
 If board or grid detection fails at a very small BlueStacks size, enlarge the
