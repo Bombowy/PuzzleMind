@@ -55,6 +55,8 @@ API reaches stability.
   ordered Cats rules after every successful application.
 - Manual `solve_bluestacks_cats.py` capture-to-deduction script with aligned board
   output, COMPLETE/STALLED diagnostics, and no gameplay automation.
+- Dry-run Cats click-plan mapping from logical K coordinates through exact
+  `CellBounds` centers to absolute desktop positions, without emitting clicks.
 
 ### Changed
 
