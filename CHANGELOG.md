@@ -22,12 +22,21 @@ API reaches stability.
   `BoardDetectionError` failure reporting.
 - Explicit board overlay rendering to `artifacts/vision/board_detection.png`.
 - Synthetic detector and renderer tests that require no live desktop application.
+- Primitive internal-grid diagnostics with normalized separator positions,
+  estimated dimensions, spacing regularity, coverage, and evidence score.
 
 ### Changed
 
 - Refactored MSS capture to return pixels directly instead of encoding a PNG.
 - Made all disk output conditional on an explicit `debug=True` request.
 - Documented deterministic candidate filtering, scoring, and tie-breaking behavior.
+- Weighted final board confidence as 40% geometry and 60% grid evidence.
+- Extended debug overlays with detected separators and grid diagnostics.
+
+### Fixed
+
+- Rejected advertisement-like rectangles through mandatory regular-grid evidence
+  instead of relying on geometry confidence or raising the global threshold.
 
 ## [0.1.0] - 2026-08-06
 

@@ -35,6 +35,24 @@ class BoardDetectionSettings:
     expected_center_x: float = 0.55
     expected_center_y: float = 0.55
     polygon_epsilon_ratio: float = 0.02
+    minimum_horizontal_grid_line_count: int = 4
+    minimum_vertical_grid_line_count: int = 4
+    minimum_estimated_rows: int = 3
+    minimum_estimated_columns: int = 3
+    maximum_horizontal_spacing_coefficient_of_variation: float = 0.22
+    maximum_vertical_spacing_coefficient_of_variation: float = 0.22
+    minimum_horizontal_line_coverage: float = 0.50
+    minimum_vertical_line_coverage: float = 0.50
+    minimum_grid_evidence_score: float = 0.65
+    grid_line_cluster_distance_relative: float = 0.02
+    grid_border_line_exclusion_tolerance: float = 0.05
+    horizontal_line_kernel_relative_length: float = 0.06
+    vertical_line_kernel_relative_length: float = 0.06
+    minimum_grid_line_response: float = 0.30
+    grid_adaptive_block_relative_size: float = 0.061
+    grid_adaptive_constant: float = 5.0
+    geometry_confidence_weight: float = 0.40
+    grid_confidence_weight: float = 0.60
     minimum_confidence: float = 0.48
     ambiguity_score_delta: float = 0.03
     duplicate_iou_threshold: float = 0.90
@@ -62,6 +80,33 @@ class BoardDetectionSettings:
             "expected_center_x": self.expected_center_x,
             "expected_center_y": self.expected_center_y,
             "polygon_epsilon_ratio": self.polygon_epsilon_ratio,
+            "maximum_horizontal_spacing_coefficient_of_variation": (
+                self.maximum_horizontal_spacing_coefficient_of_variation
+            ),
+            "maximum_vertical_spacing_coefficient_of_variation": (
+                self.maximum_vertical_spacing_coefficient_of_variation
+            ),
+            "minimum_horizontal_line_coverage": (self.minimum_horizontal_line_coverage),
+            "minimum_vertical_line_coverage": self.minimum_vertical_line_coverage,
+            "minimum_grid_evidence_score": self.minimum_grid_evidence_score,
+            "grid_line_cluster_distance_relative": (
+                self.grid_line_cluster_distance_relative
+            ),
+            "grid_border_line_exclusion_tolerance": (
+                self.grid_border_line_exclusion_tolerance
+            ),
+            "horizontal_line_kernel_relative_length": (
+                self.horizontal_line_kernel_relative_length
+            ),
+            "vertical_line_kernel_relative_length": (
+                self.vertical_line_kernel_relative_length
+            ),
+            "minimum_grid_line_response": self.minimum_grid_line_response,
+            "grid_adaptive_block_relative_size": (
+                self.grid_adaptive_block_relative_size
+            ),
+            "geometry_confidence_weight": self.geometry_confidence_weight,
+            "grid_confidence_weight": self.grid_confidence_weight,
             "minimum_confidence": self.minimum_confidence,
             "ambiguity_score_delta": self.ambiguity_score_delta,
             "duplicate_iou_threshold": self.duplicate_iou_threshold,
@@ -69,6 +114,39 @@ class BoardDetectionSettings:
         for field_name, value in unit_interval_fields.items():
             if not 0.0 <= value <= 1.0:
                 raise ValueError(f"{field_name} must be within 0.0 and 1.0.")
+
+        strictly_positive_unit_fields = {
+            "maximum_horizontal_spacing_coefficient_of_variation": (
+                self.maximum_horizontal_spacing_coefficient_of_variation
+            ),
+            "maximum_vertical_spacing_coefficient_of_variation": (
+                self.maximum_vertical_spacing_coefficient_of_variation
+            ),
+            "minimum_horizontal_line_coverage": (self.minimum_horizontal_line_coverage),
+            "minimum_vertical_line_coverage": self.minimum_vertical_line_coverage,
+            "minimum_grid_evidence_score": self.minimum_grid_evidence_score,
+            "grid_line_cluster_distance_relative": (
+                self.grid_line_cluster_distance_relative
+            ),
+            "grid_border_line_exclusion_tolerance": (
+                self.grid_border_line_exclusion_tolerance
+            ),
+            "horizontal_line_kernel_relative_length": (
+                self.horizontal_line_kernel_relative_length
+            ),
+            "vertical_line_kernel_relative_length": (
+                self.vertical_line_kernel_relative_length
+            ),
+            "minimum_grid_line_response": self.minimum_grid_line_response,
+            "grid_adaptive_block_relative_size": (
+                self.grid_adaptive_block_relative_size
+            ),
+            "geometry_confidence_weight": self.geometry_confidence_weight,
+            "grid_confidence_weight": self.grid_confidence_weight,
+        }
+        for field_name, value in strictly_positive_unit_fields.items():
+            if value <= 0.0:
+                raise ValueError(f"{field_name} must be greater than 0.0.")
 
         if not (
             self.minimum_relative_area
@@ -100,6 +178,40 @@ class BoardDetectionSettings:
             raise ValueError("morphology_iterations must be positive.")
         if self.edge_envelope_iterations < 1:
             raise ValueError("edge_envelope_iterations must be positive.")
+        positive_count_fields = {
+            "minimum_horizontal_grid_line_count": (
+                self.minimum_horizontal_grid_line_count
+            ),
+            "minimum_vertical_grid_line_count": self.minimum_vertical_grid_line_count,
+            "minimum_estimated_rows": self.minimum_estimated_rows,
+            "minimum_estimated_columns": self.minimum_estimated_columns,
+        }
+        for field_name, value in positive_count_fields.items():
+            if value < 1:
+                raise ValueError(f"{field_name} must be positive.")
+        if self.minimum_horizontal_grid_line_count < 4:
+            raise ValueError("minimum_horizontal_grid_line_count must be at least 4.")
+        if self.minimum_vertical_grid_line_count < 4:
+            raise ValueError("minimum_vertical_grid_line_count must be at least 4.")
+        if self.minimum_estimated_rows < 3:
+            raise ValueError("minimum_estimated_rows must be at least 3.")
+        if self.minimum_estimated_columns < 3:
+            raise ValueError("minimum_estimated_columns must be at least 3.")
+        if self.grid_adaptive_constant < 0.0:
+            raise ValueError("grid_adaptive_constant must not be negative.")
+        if self.grid_line_cluster_distance_relative >= 0.5:
+            raise ValueError("grid_line_cluster_distance_relative must be below 0.5.")
+        if self.grid_border_line_exclusion_tolerance >= 0.5:
+            raise ValueError("grid_border_line_exclusion_tolerance must be below 0.5.")
+        if (
+            not abs(self.geometry_confidence_weight + self.grid_confidence_weight - 1.0)
+            < 1e-9
+        ):
+            raise ValueError("Confidence weights must sum to 1.0.")
+        if self.grid_confidence_weight < self.geometry_confidence_weight:
+            raise ValueError(
+                "grid_confidence_weight must be at least geometry_confidence_weight."
+            )
 
 
 @dataclass(frozen=True, slots=True)

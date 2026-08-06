@@ -34,6 +34,20 @@ class BoardCandidateDiagnostic:
     rectangularity: float
     edge_density: float
     location_score: float
+    geometry_score: float
+    horizontal_grid_line_positions: tuple[float, ...]
+    vertical_grid_line_positions: tuple[float, ...]
+    horizontal_grid_line_count: int
+    vertical_grid_line_count: int
+    estimated_rows: int
+    estimated_columns: int
+    horizontal_spacing_coefficient_of_variation: float
+    vertical_spacing_coefficient_of_variation: float
+    horizontal_spacing_regularity: float
+    vertical_spacing_regularity: float
+    horizontal_line_coverage: float
+    vertical_line_coverage: float
+    grid_evidence_score: float
     confidence: float
     accepted: bool
     rejection_reasons: tuple[str, ...] = ()

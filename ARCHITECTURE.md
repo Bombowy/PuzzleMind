@@ -139,30 +139,61 @@ infrastructure adapter that converts the BGR image to grayscale, applies Gaussia
 blur, combines Canny and Otsu-derived masks with morphological closing, extracts
 contours, and evaluates rectangular bounding boxes. A scale-relative dilated edge
 envelope joins the small visual gaps between adjacent board tiles without parsing
-the grid itself. Typed relative thresholds
-filter title-bar, border, side-toolbar, advertisement-like, button-sized, and
+cells. Typed relative thresholds filter title-bar, border, side-toolbar,
+advertisement-like, button-sized, and
 geometrically implausible candidates without fixing coordinates to one resolution.
 
-Candidate confidence uses this deterministic formula:
+Geometry-valid candidates then receive private ROI-level regular-grid validation.
+This is not the public `GridDetector`: it neither returns cells nor provides grid
+geometry to parsers. CLAHE normalization, adaptive-threshold edges, Canny edges,
+directional morphological opening, and axis projection profiles identify long
+horizontal and vertical responses. Nearby responses are clustered by a relative
+ROI distance so thick separators count once. Candidate-border responses are
+removed, then logical outer boundaries are combined with the ordered internal
+positions to estimate rows, columns, spacing variation, and line coverage.
+
+The geometry subscore is:
 
 ```text
-0.25 × area plausibility
-+ 0.25 × rectangularity
-+ 0.20 × aspect-ratio plausibility
-+ 0.15 × edge-density plausibility
-+ 0.15 × expected-location proximity
+geometry =
+    0.25 * area plausibility
+  + 0.25 * rectangularity
+  + 0.20 * aspect-ratio plausibility
+  + 0.15 * edge-density plausibility
+  + 0.15 * expected-location proximity
 ```
 
-Every component is clamped to `[0.0, 1.0]`. Total ordering by confidence, area,
-position, and size resolves ties reproducibly. The selected result contains only
-puzzle-neutral geometry and confidence; diagnostics contain measurements and
-rejection reasons but no contours or OpenCV types. If no candidate is reliable,
-the adapter raises `BoardDetectionError` rather than returning a fabricated board.
+Grid evidence is:
+
+```text
+grid =
+    0.25 * boundary-count adequacy
+  + 0.35 * spacing regularity
+  + 0.40 * line coverage
+
+final confidence = 0.40 * geometry + 0.60 * grid
+```
+
+Horizontal and vertical values are averaged within each grid component. Spacing
+regularity is `clamp(1 - coefficient_of_variation / configured_maximum)`. Boundary
+adequacy reaches one at the configured minimum. Coverage is the mean peak
+projection response of de-duplicated internal lines. Every component and final
+score is clamped to `[0.0, 1.0]`.
+
+Confidence cannot override validation. A candidate is rejected if either axis has
+fewer than four boundaries, fewer than three estimated cells, excessive spacing
+variation, insufficient coverage, or if aggregate grid evidence is below its
+threshold. This fail-closed rule prevents advertisements and UI cards from passing
+on geometry alone. Total ordering by confidence, area, position, and size resolves
+ties reproducibly. Diagnostics contain only primitive measurements, normalized
+line-position tuples, and rejection reasons; no contours or OpenCV types cross the
+infrastructure boundary.
 
 OpenCV debug rendering is a separate infrastructure concern. It copies the
-immutable source pixels and may draw selected and rejected candidates. Persistence
-occurs only through an explicit `debug=True` call, so ordinary detection has no
-filesystem side effects.
+immutable source pixels and may draw selected/rejected candidates, de-duplicated
+horizontal and vertical lines, estimated dimensions, coverage, and grid score.
+Persistence occurs only through an explicit `debug=True` call, so ordinary
+detection has no filesystem side effects.
 
 ## Solver module
 

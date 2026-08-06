@@ -11,8 +11,9 @@ infrastructure adapters.
 
 > [!IMPORTANT]
 > LogicForge currently provides the architecture, in-memory BlueStacks capture,
-> and classical puzzle-board localization. It does not yet detect grids or cells,
-> parse puzzles, solve rules, or control input devices.
+> and classical puzzle-board localization with private regular-grid validation. It
+> does not yet expose grid/cell detection, parse puzzles, solve rules, or control
+> input devices.
 
 ## Architecture
 
@@ -119,16 +120,24 @@ uv run python scripts/detect_bluestacks_board.py
 The overlay is written to `artifacts/vision/board_detection.png`. Calling the
 detector normally never writes files. A missing or unreliable board raises a typed
 `BoardDetectionError` with candidate diagnostics instead of returning guessed
-coordinates. This milestone intentionally excludes grid detection, cell extraction,
-recognition, parsing, solving, and automation.
+coordinates.
+
+Geometry alone is not sufficient for acceptance. Every plausible candidate ROI
+must contain regular horizontal and vertical separator evidence: enough distinct
+boundaries for at least a 3x3 grid, consistent spacing, substantial line coverage,
+and a minimum aggregate grid score. Confidence combines 40% geometric evidence
+with 60% grid evidence, while all grid conditions remain mandatory hard checks.
+This internal validation does not implement the public `GridDetector` or expose
+cells. Grid detection, extraction, recognition, parsing, solving, and automation
+remain outside this milestone.
 
 ## Development
 
 Run all quality tools through `uv` so they use the managed environment:
 
 ```bash
-uv run black .
-uv run ruff check --fix .
+uv run black --check .
+uv run ruff check .
 uv run mypy
 uv run pytest
 uv build

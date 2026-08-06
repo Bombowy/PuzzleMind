@@ -10,6 +10,10 @@ import numpy as np
 from numpy.typing import NDArray
 
 from logicforge.config.settings import BoardDetectionSettings
+from logicforge.infrastructure.opencv_internal_grid_evidence import (
+    InternalGridEvidence,
+    OpenCvInternalGridEvidenceAnalyzer,
+)
 from logicforge.vision.board_detector import (
     BoardCandidateDiagnostic,
     BoardDetection,
@@ -72,18 +76,17 @@ def _intersection_over_union(
 class OpenCvBoardDetector(BoardDetector):
     """Locate a puzzle board through edges, thresholding, contours, and scoring.
 
-    Confidence is deterministic and uses five normalized components:
-    ``0.25 * area + 0.25 * rectangularity + 0.20 * aspect ratio +
-    0.15 * edge density + 0.15 * location``. Area and edge scores peak at their
-    configured preferred values; aspect peaks at 1.0; rectangularity is normalized
-    from its configured minimum to 1.0; location decreases linearly with normalized
-    distance from the configured content center.
+    The geometry subscore is ``0.25 * area + 0.25 * rectangularity +
+    0.20 * aspect ratio + 0.15 * edge density + 0.15 * location``. Final confidence
+    is ``0.40 * geometry + 0.60 * grid evidence`` by default. Mandatory grid checks
+    are evaluated before confidence, so geometry can never authorize a board alone.
     """
 
     def __init__(self, settings: BoardDetectionSettings | None = None) -> None:
         """Receive all thresholds through one immutable typed settings record."""
 
         self._settings = settings or BoardDetectionSettings()
+        self._grid_analyzer = OpenCvInternalGridEvidenceAnalyzer(self._settings)
 
     def detect(self, screenshot: Screenshot) -> BoardDetection:
         """Return the highest-confidence reliable rectangle."""
@@ -93,7 +96,10 @@ class OpenCvBoardDetector(BoardDetector):
     def analyze(self, screenshot: Screenshot) -> BoardDetectionAnalysis:
         """Detect a board and retain deterministic candidate diagnostics."""
 
-        grayscale = cv2.cvtColor(screenshot.image, cv2.COLOR_BGR2GRAY)
+        grayscale = cast(
+            NDArray[np.uint8],
+            cv2.cvtColor(screenshot.image, cv2.COLOR_BGR2GRAY),
+        )
         kernel_size = self._settings.gaussian_blur_kernel_size
         blurred = cv2.GaussianBlur(grayscale, (kernel_size, kernel_size), 0)
         edges = cast(
@@ -161,6 +167,7 @@ class OpenCvBoardDetector(BoardDetector):
             if (
                 candidate := self._evaluate_contour(
                     contour,
+                    grayscale,
                     edges,
                     screenshot.width,
                     screenshot.height,
@@ -206,6 +213,7 @@ class OpenCvBoardDetector(BoardDetector):
     def _evaluate_contour(
         self,
         contour: cv2.typing.MatLike,
+        grayscale: NDArray[np.uint8],
         edges: NDArray[np.uint8],
         screenshot_width: int,
         screenshot_height: int,
@@ -264,13 +272,19 @@ class OpenCvBoardDetector(BoardDetector):
         if len(approximation) < 4:
             rejection_reasons.append("contour is not a rectangular polygon")
 
-        confidence = self._confidence(
+        geometry_score = self._geometry_score(
             relative_area=relative_area,
             aspect_ratio=aspect_ratio,
             rectangularity=rectangularity,
             edge_density=edge_density,
             location_score=location_score,
         )
+        grid_evidence = self._empty_grid_evidence()
+        if not rejection_reasons:
+            grayscale_roi = grayscale[y : y + height, x : x + width]
+            grid_evidence = self._grid_analyzer.analyze(grayscale_roi)
+            rejection_reasons.extend(self._grid_rejection_reasons(grid_evidence))
+        confidence = self._final_confidence(geometry_score, grid_evidence.score)
         return BoardCandidateDiagnostic(
             x=x,
             y=y,
@@ -281,6 +295,24 @@ class OpenCvBoardDetector(BoardDetector):
             rectangularity=rectangularity,
             edge_density=edge_density,
             location_score=location_score,
+            geometry_score=geometry_score,
+            horizontal_grid_line_positions=(grid_evidence.horizontal_line_positions),
+            vertical_grid_line_positions=grid_evidence.vertical_line_positions,
+            horizontal_grid_line_count=grid_evidence.horizontal_line_count,
+            vertical_grid_line_count=grid_evidence.vertical_line_count,
+            estimated_rows=grid_evidence.estimated_rows,
+            estimated_columns=grid_evidence.estimated_columns,
+            horizontal_spacing_coefficient_of_variation=(
+                grid_evidence.horizontal_spacing_coefficient_of_variation
+            ),
+            vertical_spacing_coefficient_of_variation=(
+                grid_evidence.vertical_spacing_coefficient_of_variation
+            ),
+            horizontal_spacing_regularity=(grid_evidence.horizontal_spacing_regularity),
+            vertical_spacing_regularity=grid_evidence.vertical_spacing_regularity,
+            horizontal_line_coverage=grid_evidence.horizontal_line_coverage,
+            vertical_line_coverage=grid_evidence.vertical_line_coverage,
+            grid_evidence_score=grid_evidence.score,
             confidence=confidence,
             accepted=not rejection_reasons,
             rejection_reasons=tuple(rejection_reasons),
@@ -329,7 +361,7 @@ class OpenCvBoardDetector(BoardDetector):
         maximum_distance = hypot(1.0, 1.0)
         return _clamp_unit(1.0 - distance / maximum_distance), inside_content
 
-    def _confidence(
+    def _geometry_score(
         self,
         *,
         relative_area: float,
@@ -338,7 +370,7 @@ class OpenCvBoardDetector(BoardDetector):
         edge_density: float,
         location_score: float,
     ) -> float:
-        """Combine documented normalized evidence into a deterministic confidence."""
+        """Combine normalized geometric evidence into the documented subscore."""
 
         area_score = _triangular_score(
             relative_area,
@@ -361,14 +393,87 @@ class OpenCvBoardDetector(BoardDetector):
             self._settings.preferred_edge_density,
             self._settings.maximum_edge_density,
         )
-        confidence = (
+        geometry_score = (
             0.25 * area_score
             + 0.25 * rectangularity_score
             + 0.20 * aspect_score
             + 0.15 * edge_score
             + 0.15 * location_score
         )
-        return _clamp_unit(confidence)
+        return _clamp_unit(geometry_score)
+
+    def _grid_rejection_reasons(
+        self,
+        evidence: InternalGridEvidence,
+    ) -> tuple[str, ...]:
+        """Apply every mandatory grid rule independently with explicit diagnostics."""
+
+        reasons: list[str] = []
+        if (
+            evidence.horizontal_line_count
+            < self._settings.minimum_horizontal_grid_line_count
+        ):
+            reasons.append("insufficient horizontal grid lines")
+        if (
+            evidence.vertical_line_count
+            < self._settings.minimum_vertical_grid_line_count
+        ):
+            reasons.append("insufficient vertical grid lines")
+        if evidence.estimated_rows < self._settings.minimum_estimated_rows:
+            reasons.append("too few estimated rows")
+        if evidence.estimated_columns < self._settings.minimum_estimated_columns:
+            reasons.append("too few estimated columns")
+        if (
+            evidence.horizontal_spacing_coefficient_of_variation
+            > self._settings.maximum_horizontal_spacing_coefficient_of_variation
+        ):
+            reasons.append("irregular horizontal grid spacing")
+        if (
+            evidence.vertical_spacing_coefficient_of_variation
+            > self._settings.maximum_vertical_spacing_coefficient_of_variation
+        ):
+            reasons.append("irregular vertical grid spacing")
+        if (
+            evidence.horizontal_line_coverage
+            < self._settings.minimum_horizontal_line_coverage
+        ):
+            reasons.append("insufficient horizontal grid coverage")
+        if (
+            evidence.vertical_line_coverage
+            < self._settings.minimum_vertical_line_coverage
+        ):
+            reasons.append("insufficient vertical grid coverage")
+        if evidence.score < self._settings.minimum_grid_evidence_score:
+            reasons.append("grid evidence below required threshold")
+        return tuple(reasons)
+
+    def _final_confidence(self, geometry_score: float, grid_score: float) -> float:
+        """Weight mandatory grid evidence at least as strongly as geometry evidence."""
+
+        return _clamp_unit(
+            self._settings.geometry_confidence_weight * geometry_score
+            + self._settings.grid_confidence_weight * grid_score
+        )
+
+    @staticmethod
+    def _empty_grid_evidence() -> InternalGridEvidence:
+        """Represent intentionally skipped analysis for geometry-invalid candidates."""
+
+        return InternalGridEvidence(
+            horizontal_line_positions=(),
+            vertical_line_positions=(),
+            horizontal_line_count=0,
+            vertical_line_count=0,
+            estimated_rows=0,
+            estimated_columns=0,
+            horizontal_spacing_coefficient_of_variation=1.0,
+            vertical_spacing_coefficient_of_variation=1.0,
+            horizontal_spacing_regularity=0.0,
+            vertical_spacing_regularity=0.0,
+            horizontal_line_coverage=0.0,
+            vertical_line_coverage=0.0,
+            score=0.0,
+        )
 
     def _suppress_duplicates(
         self,
@@ -439,7 +544,7 @@ class OpenCvBoardDetector(BoardDetector):
                 f"{reason}: {count}" for reason, count in sorted(reason_counts.items())
             )
             raise BoardDetectionError(
-                "No board candidate passed geometric filters. "
+                "No board candidate passed geometry and mandatory grid validation. "
                 f"Contours: {contour_count}; retained candidates: {len(candidates)}; "
                 f"rejections: {reason_summary or 'none above diagnostic area floor'}.",
                 diagnostics,
