@@ -1,2 +1,21 @@
 # PuzzleMind
-A modular Computer Vision and rule-based deduction framework for solving logic puzzles from screenshots using constraint propagation, explainable reasoning, and automated gameplay.
+
+PuzzleMind to projekt w Pythonie znajdujący się na wczesnym etapie rozwoju.
+
+## Wymagania
+
+- Python 3.10 lub nowszy
+
+## Uruchomienie
+
+```bash
+python main.py
+```
+
+## Struktura projektu
+
+- `main.py` – punkt wejścia aplikacji.
+
+## Rozwój
+
+Kod projektu będzie rozwijany wraz z kolejnymi funkcjami aplikacji.
