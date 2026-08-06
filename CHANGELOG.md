@@ -36,6 +36,11 @@ API reaches stability.
 
 ### Changed
 
+- Replaced the immutable placeholder board aggregate with one mutable nested-list
+  matrix copied from `ColorDetectionResult`, plus direct query and `K`/`X` mutation
+  methods.
+- Made `K` and `X` terminal, idempotent board states and added `BoardStateError`
+  for contradiction-safe `K -> X`, `X -> K`, and invalid-value mutations.
 - Refactored MSS capture to return pixels directly instead of encoding a PNG.
 - Made all disk output conditional on an explicit `debug=True` request.
 - Documented deterministic candidate filtering, scoring, and tie-breaking behavior.

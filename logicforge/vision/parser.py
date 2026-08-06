@@ -15,7 +15,7 @@ class PuzzleParser(ABC):
 
     @abstractmethod
     def parse(self, screenshot: Screenshot) -> Board:
-        """Translate one screenshot into an immutable domain-board snapshot.
+        """Translate one screenshot into the single mutable domain board.
 
         TODO: Implement puzzle-specific observation mapping, validation, and rich
         parse diagnostics in v0.2 without introducing solver behavior.

@@ -11,7 +11,7 @@ from logicforge.core.metadata import Metadata
 
 @dataclass(frozen=True, slots=True)
 class RuleContext:
-    """Provide immutable input and orchestration metadata to a rule evaluation.
+    """Provide the shared mutable board and metadata to a rule evaluation.
 
     TODO: Add cancellation, tracing, and plugin capability information when the
     v0.4 engine lifecycle has stable operational requirements.
@@ -27,7 +27,7 @@ class RuleOutcome:
     """Describe a proposed state transition without applying it to the board.
 
     Separating proposals from mutation lets the engine validate conflicts, retain
-    provenance, and produce explanations before a new snapshot is committed.
+    provenance, and produce explanations before changing the shared board matrix.
 
     TODO: Replace the opaque payload with typed transition commands in v0.4 once
     assignment, elimination, and contradiction semantics are fully specified.
@@ -52,7 +52,7 @@ class BaseRule(ABC):
 
     @abstractmethod
     def evaluate(self, context: RuleContext) -> tuple[RuleOutcome, ...]:
-        """Return every deduction this rule can justify for the current snapshot.
+        """Return every deduction this rule can justify for the current board.
 
         TODO: Implement concrete plugin rules in milestone-specific modules after
         the engine defines ordering, conflict resolution, and outcome validation.

@@ -5,9 +5,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 LogicForge is a modular Computer Vision and rule-based deduction framework for
-solving logic puzzle games from screenshots. It is designed around immutable
-domain models, deterministic rules, explainable state transitions, and replaceable
-infrastructure adapters.
+solving logic puzzle games from screenshots. It is designed around typed vision
+results, one explicit mutable solver board, deterministic rules, explainable state
+transitions, and replaceable infrastructure adapters.
 
 > [!IMPORTANT]
 > LogicForge currently provides the architecture, in-memory BlueStacks capture,
@@ -25,7 +25,7 @@ automation remain behind explicit ports.
 flowchart LR
     Input["Screenshot / image"] --> IO["I/O adapters"]
     IO --> Vision["Vision pipeline"]
-    Vision --> Core["Immutable core board"]
+    Vision --> Core["Mutable core board"]
     Plugins["Puzzle plugins"] --> Vision
     Plugins --> Rules["Rule contracts"]
     Core --> Solver["Deduction solver"]
@@ -45,7 +45,7 @@ responsibilities, and extension guidance.
 - Public screenshot-space grid boundaries and immutable cell rectangles.
 - Deterministic LAB cell-color classes without hardcoded human color names.
 - A future symbol detector port without an implementation yet.
-- Immutable puzzle-neutral board, cell, candidate, and region models.
+- One mutable puzzle-neutral `list[list[str]]` board for future solver deductions.
 - Deterministic rule evaluation with atomic state propagation.
 - Auditable deductions and presentation-neutral explanations.
 - Plugin discovery for independently evolving puzzle families.
@@ -177,6 +177,17 @@ row-major color matrix, and mean confidence. Explicit debug mode writes
 representative-color swatches, and global summary. Normal detector calls do not
 write files. The result is immutable and ready for a future parser/solver, but this
 milestone does not detect cats, X marks, other symbols, or puzzle rules.
+
+## Mutable logical board
+
+`Board(ColorDetectionResult)` copies the immutable detected `color_matrix` once
+into its only solver-facing representation: `cells: list[list[str]]`. Entries use
+`C0`, `C1`, ... while unresolved, `K` for a confirmed cat, and `X` for an excluded
+cell. `get`, `set_cat`, `set_blocked`, `is_unknown`, `is_cat`, and `is_blocked`
+operate directly on that matrix. The board does not create immutable snapshots,
+region objects, or a parallel state matrix after mutations. `K` and `X` are final:
+setting the same value again is idempotent, while `K -> X` or `X -> K` raises
+`BoardStateError` before any cell is changed.
 
 ### Troubleshooting small BlueStacks windows
 

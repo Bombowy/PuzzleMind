@@ -21,7 +21,7 @@ preceding milestone meets its acceptance criteria.
 ## v0.3 — Board representation
 
 - Finalize board invariants and validated construction.
-- Add efficient immutable coordinate and region indexes.
+- Use one mutable `list[list[str]]` matrix without parallel state snapshots.
 - Define uncertain and incomplete observation semantics.
 - Add serialization and property-based domain tests.
 
@@ -35,7 +35,7 @@ preceding milestone meets its acceptance criteria.
 ## v0.5 — Cats Puzzle Solver
 
 - Implement the Cats screenshot parser.
-- Model Cats regions, symbols, and constraints.
+- Model Cats symbols and color-based constraints on the single board matrix.
 - Implement small, independently tested Cats rules.
 - Validate end-to-end solving against a versioned fixture corpus.
 

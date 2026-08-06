@@ -1,4 +1,4 @@
-"""Immutable records representing solver progress."""
+"""Lifecycle metadata referencing the one mutable solver board."""
 
 from dataclasses import dataclass
 from enum import StrEnum, auto
@@ -24,13 +24,13 @@ class SolverStatus(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class SolverState:
-    """Capture a complete, replayable solver snapshot after one engine iteration.
+    """Track solver lifecycle without duplicating the mutable board matrix.
 
-    Storing applied outcomes alongside the board makes state transitions auditable
-    and gives the explainability layer stable provenance without solver coupling.
+    The frozen wrapper does not make ``board`` immutable and never copies its
+    cells. Applied outcomes may describe in-place changes for later explanations.
 
-    TODO: Add parent-state identifiers and compact persistence once real puzzle
-    fixtures establish memory and replay requirements.
+    TODO: Define lifecycle metadata without introducing board snapshots when the
+    concrete solver orchestration is implemented.
     """
 
     board: Board

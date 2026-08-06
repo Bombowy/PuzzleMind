@@ -1,4 +1,4 @@
-"""Boundary for validating and applying rule outcomes to solver snapshots."""
+"""Boundary for validating outcomes applied to the shared mutable board."""
 
 from abc import ABC, abstractmethod
 
@@ -7,10 +7,10 @@ from logicforge.solver.state import SolverState
 
 
 class PropagationStrategy(ABC):
-    """Define atomic conversion of rule proposals into a new immutable state.
+    """Define validated application of rule proposals to the existing board.
 
     Propagation is isolated from rule discovery so invariants, conflicts, and
-    snapshot creation have one implementation point shared by every plugin.
+    ordered in-place mutations have one implementation point shared by plugins.
     """
 
     @abstractmethod
@@ -19,10 +19,10 @@ class PropagationStrategy(ABC):
         state: SolverState,
         outcomes: tuple[RuleOutcome, ...],
     ) -> SolverState:
-        """Validate outcomes and return the next immutable solver state.
+        """Validate outcomes, mutate the shared board, and return lifecycle state.
 
-        TODO: Implement typed transition validation, atomic conflict handling, and
-        structural sharing in v0.4 after the board aggregate is finalized.
+        TODO: Implement typed transition validation and conflict handling without
+        copying the board matrix in v0.4.
         """
 
         raise NotImplementedError

@@ -21,11 +21,11 @@ class RenderArtifact:
 
 
 class BoardRenderer(ABC):
-    """Render immutable boards without introducing UI concerns into the domain."""
+    """Render the current mutable board without introducing UI domain coupling."""
 
     @abstractmethod
     def render(self, board: Board) -> RenderArtifact:
-        """Create a presentation artifact from a board snapshot.
+        """Create a presentation artifact from the board's current matrix.
 
         TODO: Implement accessible text and image renderers after v0.3 defines the
         stable board representation and plugin symbol contract.

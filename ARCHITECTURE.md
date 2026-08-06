@@ -35,7 +35,7 @@ core and public rule/vision contracts, but not on concrete adapters.
 
 | Package | Responsibility | Must not contain |
 | --- | --- | --- |
-| `core` | Immutable puzzle-neutral entities and value objects | CV types, I/O, plugin rules |
+| `core` | Single mutable solver board and puzzle-neutral values | CV algorithms, I/O, plugin rules |
 | `vision` | Screenshot models and detector/parser ports | Deduction logic, mouse actions |
 | `rules` | Stateless rule contracts and engine boundary | Puzzle-specific branching, mutation |
 | `solver` | Deduction use-case and state-transition boundaries | Image processing, UI code |
@@ -66,7 +66,7 @@ flowchart TB
     end
 
     subgraph Domain["Domain core"]
-        Board["Board / Cell / Region"]
+        Board["Mutable Board cells"]
         Values["Coordinates / Candidate / Enums"]
     end
 
@@ -97,14 +97,15 @@ The planned end-to-end flow is a sequence of typed transformations:
 
 1. A capture or I/O adapter creates an immutable in-memory BGR `Screenshot`.
 2. A plugin parser coordinates board, grid, color, and later symbol detectors.
-3. The parser returns an immutable `Board` plus future diagnostics; it does not
-   make deductions.
-4. The solver supplies a snapshot and ordered plugin rules to the Rule Engine.
-5. Rules return proposed `RuleOutcome` records without mutating the board.
-6. A propagation strategy validates the complete proposal set and creates a new
-   immutable `SolverState` atomically.
-7. Outcomes become semantic `Explanation` records with stable provenance.
-8. Renderers present states and explanations. Automation receives only explicit,
+3. `Board(ColorDetectionResult)` copies `color_matrix` once into the sole mutable
+   `cells: list[list[str]]` solver representation.
+4. The solver supplies that same board and ordered plugin rules to the Rule Engine.
+5. Rules return proposed `RuleOutcome` records; validated outcomes are applied to
+   the same matrix through `set_cat` and `set_blocked`.
+6. No immutable board, parallel state matrix, region map, or per-change board copy
+   is created.
+7. Outcomes may later become semantic `Explanation` records with provenance.
+8. Renderers present the current board. Automation receives only explicit,
    separately authorized commands derived from a validated state.
 
 No stage may communicate by hidden global state. Failed or ambiguous input will
@@ -242,16 +243,27 @@ primitive diagnostics. OpenCV arrays remain inside infrastructure. A separate
 renderer labels every cell and may persist an overlay only with explicit debug
 behavior. No color stage imports puzzle plugins, solver code, or automation.
 
+The domain `Board` is intentionally different from immutable vision transport.
+Its constructor copies `ColorDetectionResult.color_matrix` into nested lists once.
+Thereafter `C<n>`, `K`, and `X` coexist in that single mutable matrix, and all
+solver-facing queries and assignments operate on it directly. `Board` contains no
+`Cell` objects, `Region` objects, snapshot conversion, or second state matrix.
+Unresolved `C<n>` entries may transition once to either `K` or `X`. Both final
+states accept an identical idempotent assignment but reject the opposite state
+with `BoardStateError`; validation occurs before assignment, so a conflict cannot
+partially mutate the board.
+
 ## Solver module
 
 The solver is an application use case, not a collection of puzzle rules. It will
 coordinate repeated engine evaluations and propagation until the board is solved,
 stalled, contradictory, cancelled, or limited by policy.
 
-Every iteration produces a new immutable state. This makes runs reproducible,
-supports time-travel debugging, and preserves the exact evidence needed for human
-explanations. Search, guessing, or probabilistic strategies are outside the v1.0
-scope unless later introduced through explicit strategy contracts.
+Solver iterations will mutate the one supplied `Board` through its narrow methods.
+Lifecycle and explanation metadata may record what changed, but must not duplicate
+the board matrix or create a board copy after every deduction. Search, guessing,
+or probabilistic strategies are outside the v1.0 scope unless later introduced
+through explicit strategy contracts.
 
 ## Plugin system
 
@@ -294,7 +306,7 @@ emergency stop before v0.7 can emit real input events.
 ## Future roadmap
 
 - **v0.2:** extend screenshot interpretation beyond the implemented board locator.
-- **v0.3:** finalize validated board construction and indexed immutable snapshots.
+- **v0.3:** finalize the single mutable string-matrix board contract.
 - **v0.4:** implement deterministic engine and atomic propagation.
 - **v0.5:** implement Cats parsing, constraints, rules, and fixture corpus.
 - **v0.6:** add structured, localized, replayable explanations.

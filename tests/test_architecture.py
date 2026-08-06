@@ -7,7 +7,6 @@ from pkgutil import walk_packages
 import logicforge
 from logicforge.automation.keyboard import KeyboardController
 from logicforge.automation.mouse import MouseController
-from logicforge.core.board import Board
 from logicforge.plugins.base import PuzzlePlugin
 from logicforge.rules.rule_engine import RuleEngine
 from logicforge.solver.deduction_solver import DeductionSolver
@@ -44,20 +43,6 @@ def test_primary_boundary_types_remain_abstract() -> None:
     )
 
     assert all(isabstract(boundary_type) for boundary_type in boundary_types)
-
-
-def test_domain_records_can_describe_an_empty_board_snapshot() -> None:
-    """Confirm the minimal puzzle-neutral board contract remains constructible.
-
-    The test validates shape only; board invariants and solving behavior are
-    intentionally deferred to the v0.3 and v0.4 milestones.
-    """
-
-    board = Board(width=0, height=0)
-
-    assert board.cells == ()
-    assert board.regions == ()
-    assert board.puzzle_type is None
 
 
 def test_package_version_matches_architecture_milestone() -> None:

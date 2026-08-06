@@ -34,7 +34,7 @@ class RuleEngine(ABC):
         *,
         iteration: int,
     ) -> RuleEngineResult:
-        """Evaluate a complete ordered rule set against one board snapshot.
+        """Evaluate a complete ordered rule set against the shared mutable board.
 
         TODO: Implement deterministic scheduling, isolation of rule failures,
         outcome validation, and conflict reporting in the v0.4 milestone.
