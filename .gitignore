@@ -20,6 +20,7 @@ dist/
 .coverage
 .coverage.*
 htmlcov/
+coverage.xml
 .mypy_cache/
 .ruff_cache/
 .tox/
@@ -38,3 +39,7 @@ htmlcov/
 # Operating system files
 .DS_Store
 Thumbs.db
+
+# Local runtime and documentation artifacts
+artifacts/
+site/
