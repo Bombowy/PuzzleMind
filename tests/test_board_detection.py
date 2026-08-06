@@ -19,6 +19,7 @@ from synthetic_vision import (
     advertisement_like_screenshot as _advertisement_like_screenshot,
 )
 from synthetic_vision import custom_grid_screenshot as _custom_grid_screenshot
+from synthetic_vision import live_like_9x9_weak_grid_case
 
 
 def _screenshot_from_image(image: np.ndarray) -> Screenshot:
@@ -201,6 +202,22 @@ def test_accepts_a_regular_rectangular_grid() -> None:
     assert candidate.estimated_rows == 4
     assert candidate.estimated_columns == 7
     assert candidate.grid_evidence_score >= 0.65
+
+
+def test_board_detector_accepts_live_like_9x9_with_one_weak_separator() -> None:
+    """Use the shared internal analyzer to retain a correct board candidate."""
+
+    screenshot, _ = live_like_9x9_weak_grid_case(4)
+
+    analysis = OpenCvBoardDetector().analyze(screenshot)
+    selected = analysis.diagnostics.selected_candidate
+
+    assert selected is not None
+    assert selected.estimated_rows == 9
+    assert selected.estimated_columns == 9
+    assert selected.horizontal_grid_line_count == 10
+    assert selected.vertical_grid_line_count == 10
+    assert selected.grid_evidence_score >= 0.65
 
 
 @pytest.mark.parametrize("rows", [3, 5, 9])
@@ -464,6 +481,35 @@ def test_debug_overlay_contains_de_duplicated_grid_lines(tmp_path: Path) -> None
         lambda: BoardDetectionSettings(horizontal_line_kernel_relative_length=0.0),
         lambda: BoardDetectionSettings(vertical_line_kernel_relative_length=0.0),
         lambda: BoardDetectionSettings(minimum_grid_line_response=0.0),
+        lambda: BoardDetectionSettings(
+            grid_weak_horizontal_line_kernel_relative_length=0.0
+        ),
+        lambda: BoardDetectionSettings(
+            grid_weak_vertical_line_kernel_relative_length=float("nan")
+        ),
+        lambda: BoardDetectionSettings(
+            grid_missing_line_minimum_gap_factor=float("inf")
+        ),
+        lambda: BoardDetectionSettings(
+            grid_missing_line_minimum_gap_factor=2.5,
+            grid_missing_line_maximum_gap_factor=2.0,
+        ),
+        lambda: BoardDetectionSettings(
+            grid_missing_line_search_half_width_fraction=0.0
+        ),
+        lambda: BoardDetectionSettings(
+            grid_missing_line_search_half_width_fraction=0.51
+        ),
+        lambda: BoardDetectionSettings(grid_missing_line_minimum_weak_response=-0.01),
+        lambda: BoardDetectionSettings(
+            grid_missing_line_maximum_other_gap_deviation=float("nan")
+        ),
+        lambda: BoardDetectionSettings(grid_missing_line_minimum_cv_improvement=1.01),
+        lambda: BoardDetectionSettings(grid_missing_line_maximum_recovered_per_axis=-1),
+        lambda: BoardDetectionSettings(grid_missing_line_maximum_recovered_per_axis=2),
+        lambda: BoardDetectionSettings(
+            grid_missing_line_maximum_recovered_per_axis=0.5  # type: ignore[arg-type]
+        ),
         lambda: BoardDetectionSettings(grid_adaptive_block_relative_size=0.0),
         lambda: BoardDetectionSettings(
             geometry_confidence_weight=0.60,

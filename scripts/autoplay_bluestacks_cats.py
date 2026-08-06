@@ -98,6 +98,10 @@ class CatsSolutionValidationError(RuntimeError):
     """Report an unsafe, partial, or internally inconsistent Cats solution."""
 
 
+class CatsBoardGeometryMismatchError(CatsSolutionValidationError):
+    """Reject Cats vision geometry before constructing or solving a Board."""
+
+
 class CatsAutomationError(RuntimeError):
     """Report an inconsistent autoplay phase or required action."""
 
@@ -399,6 +403,27 @@ def validate_complete_cats_solution(solved: CatsSolvedBoard) -> None:
         )
 
 
+def validate_cats_board_input_geometry(board_input: CatsBoardInput) -> None:
+    """Require a square Cats grid and one color per row before logical solving."""
+
+    grid = board_input.grid
+    color_result = board_input.color_result
+    matrix = color_result.color_matrix
+    if grid.rows != grid.columns or grid.rows != color_result.color_count:
+        raise CatsBoardGeometryMismatchError(
+            "Cats board geometry mismatch: "
+            f"grid={grid.rows}x{grid.columns}, "
+            f"colors={color_result.color_count}."
+        )
+    if len(matrix) != grid.rows or any(len(row) != grid.columns for row in matrix):
+        matrix_widths = tuple(len(row) for row in matrix)
+        raise CatsBoardGeometryMismatchError(
+            "Cats color_matrix geometry mismatch: "
+            f"grid={grid.rows}x{grid.columns}, "
+            f"matrix_rows={len(matrix)}, matrix_widths={matrix_widths}."
+        )
+
+
 def print_autoplay_summary(summary: CatsAutoplaySummary) -> None:
     """Print deterministic primitive session totals."""
 
@@ -520,6 +545,7 @@ class CatsAutoplayRunner:
         self._print_screen(detection)
         if detection.state is CatsScreenState.BOARD:
             board_input = self._analyze_board(screenshot)
+            validate_cats_board_input_geometry(board_input)
             solved = self._solve_board(window, board_input)
             self._print_board_solution(window, screenshot, solved)
             validate_complete_cats_solution(solved)
@@ -626,16 +652,26 @@ class CatsAutoplayRunner:
             f"[board] detected {board_input.grid.rows}x{board_input.grid.columns}, "
             f"colors={board_input.color_result.color_count}"
         )
+        try:
+            validate_cats_board_input_geometry(board_input)
+        except CatsBoardGeometryMismatchError as error:
+            print(
+                "[board] rejected transient geometry: "
+                f"grid={board_input.grid.rows}x{board_input.grid.columns}, "
+                f"colors={board_input.color_result.color_count}; "
+                f"{error}; waiting for retry"
+            )
+            return False, False
         matrix = board_input.color_result.color_matrix
         if matrix == self._last_solved_color_matrix:
             print("[board] old completed color_matrix still visible; waiting")
             return False, False
 
-        print("[board] new level accepted")
-        self._last_progress_at = now
         solved = self._solve_board(window, board_input)
         self._print_board_solution(window, screenshot, solved)
         validate_complete_cats_solution(solved)
+        print("[board] new level accepted")
+        self._last_progress_at = now
 
         current_window = self._locator.locate()
         if current_window.bounds != window.bounds:

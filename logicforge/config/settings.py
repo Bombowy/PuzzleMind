@@ -1,6 +1,7 @@
 """Dependency-free settings records for framework composition."""
 
 from dataclasses import dataclass, field
+from math import isfinite
 from pathlib import Path
 
 
@@ -49,6 +50,16 @@ class BoardDetectionSettings:
     horizontal_line_kernel_relative_length: float = 0.06
     vertical_line_kernel_relative_length: float = 0.06
     minimum_grid_line_response: float = 0.30
+    grid_missing_line_recovery_enabled: bool = True
+    grid_weak_horizontal_line_kernel_relative_length: float = 0.03
+    grid_weak_vertical_line_kernel_relative_length: float = 0.03
+    grid_missing_line_minimum_gap_factor: float = 1.55
+    grid_missing_line_maximum_gap_factor: float = 2.45
+    grid_missing_line_search_half_width_fraction: float = 0.25
+    grid_missing_line_minimum_weak_response: float = 0.10
+    grid_missing_line_maximum_other_gap_deviation: float = 0.30
+    grid_missing_line_minimum_cv_improvement: float = 0.05
+    grid_missing_line_maximum_recovered_per_axis: int = 1
     grid_adaptive_block_relative_size: float = 0.061
     grid_adaptive_constant: float = 5.0
     geometry_confidence_weight: float = 0.40
@@ -102,6 +113,24 @@ class BoardDetectionSettings:
                 self.vertical_line_kernel_relative_length
             ),
             "minimum_grid_line_response": self.minimum_grid_line_response,
+            "grid_weak_horizontal_line_kernel_relative_length": (
+                self.grid_weak_horizontal_line_kernel_relative_length
+            ),
+            "grid_weak_vertical_line_kernel_relative_length": (
+                self.grid_weak_vertical_line_kernel_relative_length
+            ),
+            "grid_missing_line_search_half_width_fraction": (
+                self.grid_missing_line_search_half_width_fraction
+            ),
+            "grid_missing_line_minimum_weak_response": (
+                self.grid_missing_line_minimum_weak_response
+            ),
+            "grid_missing_line_maximum_other_gap_deviation": (
+                self.grid_missing_line_maximum_other_gap_deviation
+            ),
+            "grid_missing_line_minimum_cv_improvement": (
+                self.grid_missing_line_minimum_cv_improvement
+            ),
             "grid_adaptive_block_relative_size": (
                 self.grid_adaptive_block_relative_size
             ),
@@ -138,6 +167,15 @@ class BoardDetectionSettings:
                 self.vertical_line_kernel_relative_length
             ),
             "minimum_grid_line_response": self.minimum_grid_line_response,
+            "grid_weak_horizontal_line_kernel_relative_length": (
+                self.grid_weak_horizontal_line_kernel_relative_length
+            ),
+            "grid_weak_vertical_line_kernel_relative_length": (
+                self.grid_weak_vertical_line_kernel_relative_length
+            ),
+            "grid_missing_line_search_half_width_fraction": (
+                self.grid_missing_line_search_half_width_fraction
+            ),
             "grid_adaptive_block_relative_size": (
                 self.grid_adaptive_block_relative_size
             ),
@@ -203,6 +241,31 @@ class BoardDetectionSettings:
             raise ValueError("grid_line_cluster_distance_relative must be below 0.5.")
         if self.grid_border_line_exclusion_tolerance >= 0.5:
             raise ValueError("grid_border_line_exclusion_tolerance must be below 0.5.")
+        gap_factors = (
+            self.grid_missing_line_minimum_gap_factor,
+            self.grid_missing_line_maximum_gap_factor,
+        )
+        if any(not isfinite(value) for value in gap_factors):
+            raise ValueError("Grid missing-line gap factors must be finite.")
+        if not 1.0 < gap_factors[0] < gap_factors[1] <= 4.0:
+            raise ValueError(
+                "Grid missing-line gap factors must satisfy "
+                "1 < minimum < maximum <= 4."
+            )
+        if self.grid_missing_line_search_half_width_fraction > 0.5:
+            raise ValueError(
+                "grid_missing_line_search_half_width_fraction must not exceed 0.5."
+            )
+        if not isinstance(
+            self.grid_missing_line_maximum_recovered_per_axis, int
+        ) or isinstance(self.grid_missing_line_maximum_recovered_per_axis, bool):
+            raise ValueError(
+                "grid_missing_line_maximum_recovered_per_axis must be an integer."
+            )
+        if not 0 <= self.grid_missing_line_maximum_recovered_per_axis <= 1:
+            raise ValueError(
+                "grid_missing_line_maximum_recovered_per_axis must be 0 or 1."
+            )
         if (
             not abs(self.geometry_confidence_weight + self.grid_confidence_weight - 1.0)
             < 1e-9

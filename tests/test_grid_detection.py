@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 from numpy.typing import NDArray
 
-from logicforge.config.settings import GridExtractionSettings
+from logicforge.config.settings import BoardDetectionSettings, GridExtractionSettings
 from logicforge.infrastructure.opencv_grid_detection_renderer import (
     OpenCvGridDetectionDebugRenderer,
 )
@@ -23,6 +23,9 @@ from logicforge.vision.screenshot import Screenshot
 from synthetic_vision import (
     advertisement_like_screenshot,
     custom_grid_screenshot,
+    live_like_9x9_weak_grid_case,
+    screenshot_from_image,
+    weak_separator_grid_case,
 )
 
 
@@ -250,6 +253,205 @@ def test_repeated_detection_is_exactly_deterministic() -> None:
     results = tuple(detector.detect(screenshot, board) for _ in range(3))
 
     assert results[0] == results[1] == results[2]
+
+
+@pytest.mark.parametrize("weakened_line_index", (2, 4, 6, 7))
+def test_recovers_one_real_weak_vertical_separator_in_live_like_9x9(
+    weakened_line_index: int,
+) -> None:
+    """Restore one double gap only where fragmented image evidence remains."""
+
+    screenshot, board = live_like_9x9_weak_grid_case(weakened_line_index)
+    original = screenshot.image.copy()
+
+    grid = OpenCvGridDetector().detect(screenshot, board)
+
+    expected_x = board.x + round(board.width * weakened_line_index / 9)
+    assert grid.rows == 9
+    assert grid.columns == 9
+    assert len(grid.horizontal_lines) == 10
+    assert len(grid.vertical_lines) == 10
+    assert len(grid.cells) == 81
+    assert min(abs(line - expected_x) for line in grid.vertical_lines) <= 4
+    assert all(cell.width > 0 and cell.height > 0 for cell in grid.cells)
+    assert grid.horizontal_lines[0] == board.y
+    assert grid.horizontal_lines[-1] == board.y + board.height
+    assert grid.vertical_lines[0] == board.x
+    assert grid.vertical_lines[-1] == board.x + board.width
+    assert np.array_equal(screenshot.image, original)
+
+
+def test_recovered_9x9_cells_tile_columns_without_gaps_or_overlaps() -> None:
+    """Keep recovered pixel boundaries unique and preserve exact board coverage."""
+
+    screenshot, board = live_like_9x9_weak_grid_case(4)
+
+    first = OpenCvGridDetector().detect(screenshot, board)
+    second = OpenCvGridDetector().detect(screenshot, board)
+
+    assert first == second
+    assert len(set(first.vertical_lines)) == len(first.vertical_lines)
+    for row in range(first.rows):
+        cells = first.cells[row * first.columns : (row + 1) * first.columns]
+        assert cells[0].x == board.x
+        assert cells[-1].x + cells[-1].width == board.x + board.width
+        assert all(left.x + left.width == right.x for left, right in pairwise(cells))
+
+
+def test_recovers_one_real_weak_horizontal_separator() -> None:
+    """Apply identical independent recovery semantics to the horizontal axis."""
+
+    screenshot, board = weak_separator_grid_case(
+        rows=9,
+        columns=9,
+        weakened_horizontal_line_indices=(5,),
+    )
+
+    grid = OpenCvGridDetector().detect(screenshot, board)
+
+    expected_y = board.y + round(board.height * 5 / 9)
+    assert (grid.rows, grid.columns) == (9, 9)
+    assert min(abs(line - expected_y) for line in grid.horizontal_lines) <= 4
+
+
+def test_recovers_one_weak_separator_independently_on_both_axes() -> None:
+    """Permit one horizontal and one vertical recovery without coupling dimensions."""
+
+    screenshot, board = live_like_9x9_weak_grid_case(
+        4,
+        weakened_horizontal_line_index=5,
+    )
+
+    grid = OpenCvGridDetector().detect(screenshot, board)
+
+    assert (grid.rows, grid.columns) == (9, 9)
+    assert len(grid.horizontal_lines) == len(grid.vertical_lines) == 10
+
+
+def test_does_not_invent_completely_removed_separator_without_weak_response() -> None:
+    """Leave a 9x8 result rejected when the double gap contains no image signal."""
+
+    screenshot, board = live_like_9x9_weak_grid_case(
+        4,
+        weak_signal_present=False,
+    )
+
+    with pytest.raises(GridDetectionError) as raised:
+        OpenCvGridDetector().detect(screenshot, board)
+
+    diagnostics = raised.value.diagnostics
+    assert diagnostics.estimated_rows == 9
+    assert diagnostics.estimated_columns == 8
+    assert len(diagnostics.vertical_lines) == 9
+
+
+def test_does_not_recover_when_two_lines_are_missing_on_one_axis() -> None:
+    """Refuse interpolation when regularity identifies two independent large gaps."""
+
+    screenshot, board = weak_separator_grid_case(
+        rows=9,
+        columns=9,
+        weakened_vertical_line_indices=(3, 6),
+    )
+
+    with pytest.raises(GridDetectionError) as raised:
+        OpenCvGridDetector().detect(screenshot, board)
+
+    assert raised.value.diagnostics.estimated_columns == 7
+
+
+def test_irregular_double_sized_gap_does_not_receive_an_artificial_line() -> None:
+    """Do not repair an intentional large cell when the remaining gaps disagree."""
+
+    screenshot = custom_grid_screenshot(
+        rows=5,
+        columns=6,
+        vertical_positions=(0.10, 0.25, 0.55, 0.72, 0.90),
+    )
+    board = BoardDetection(x=200, y=140, width=400, height=320, confidence=0.9)
+
+    with pytest.raises(GridDetectionError) as raised:
+        OpenCvGridDetector().detect(screenshot, board)
+
+    assert raised.value.diagnostics.estimated_columns == 6
+    assert any(
+        "irregular vertical grid spacing" in reason
+        for reason in raised.value.diagnostics.rejection_reasons
+    )
+
+
+def test_decoration_inside_cell_does_not_become_separator() -> None:
+    """Ignore weak decorative structure when strong spacing has no double gap."""
+
+    screenshot, board = weak_separator_grid_case(rows=5, columns=5)
+    image = screenshot.image.copy()
+    decoration_x = board.x + round(board.width * 0.36)
+    for row in range(5):
+        center_y = board.y + round(board.height * (row + 0.5) / 5)
+        cv2.line(
+            image,
+            (decoration_x, center_y - 10),
+            (decoration_x, center_y + 10),
+            (40, 40, 40),
+            2,
+        )
+
+    grid = OpenCvGridDetector().detect(screenshot_from_image(image), board)
+
+    assert grid.columns == 5
+    assert decoration_x not in grid.vertical_lines
+
+
+def test_color_edge_outside_midpoint_search_does_not_fill_double_gap() -> None:
+    """Require weak support near the expected midpoint, not anywhere in a large gap."""
+
+    screenshot, board = live_like_9x9_weak_grid_case(
+        4,
+        weak_signal_present=False,
+    )
+    image = screenshot.image.copy()
+    false_edge_x = board.x + round(board.width * 3.55 / 9)
+    cv2.rectangle(
+        image,
+        (false_edge_x, board.y + 8),
+        (board.x + round(board.width * 4 / 9), board.y + board.height - 8),
+        (120, 190, 230),
+        -1,
+    )
+
+    with pytest.raises(GridDetectionError):
+        OpenCvGridDetector().detect(screenshot_from_image(image), board)
+
+
+def test_rectangular_5x10_can_recover_one_weak_vertical_separator() -> None:
+    """Keep generic recovery independent of square Cats geometry."""
+
+    screenshot, board = weak_separator_grid_case(
+        rows=5,
+        columns=10,
+        weakened_vertical_line_indices=(6,),
+        board_width=600,
+        board_height=400,
+    )
+
+    grid = OpenCvGridDetector().detect(screenshot, board)
+
+    assert (grid.rows, grid.columns) == (5, 10)
+    assert len(grid.cells) == 50
+
+
+def test_recovery_disabled_preserves_incomplete_strong_pass() -> None:
+    """Allow callers to retain the pre-recovery 9x8 evidence through settings."""
+
+    screenshot, board = live_like_9x9_weak_grid_case(4)
+    detector = OpenCvGridDetector(
+        BoardDetectionSettings(grid_missing_line_recovery_enabled=False)
+    )
+
+    with pytest.raises(GridDetectionError) as raised:
+        detector.detect(screenshot, board)
+
+    assert raised.value.diagnostics.estimated_columns == 8
 
 
 @pytest.mark.parametrize(

@@ -94,11 +94,20 @@ API reaches stability.
 - Autoplay retains the existing row-major double left click per `K` with a 10 ms
   default delay, while ranking and level-complete overlays receive one left click;
   `STALLED` and validation failures stop before any board click.
+- Extended the one-shot grid diagnostic output with final horizontal/vertical
+  boundaries and derived row heights/column widths.
 
 ### Fixed
 
 - Rejected advertisement-like rectangles through mandatory regular-grid evidence
   instead of relying on geometry confidence or raising the global threshold.
+- Conservatively recover at most one weak separator per grid axis when one
+  regular-spacing gap is approximately double width, a real normalized weak
+  directional/Sobel response exists near its midpoint, and spacing CV improves;
+  the original global strong-line threshold remains unchanged.
+- Reject transient Cats input such as `9x8` with nine colors before constructing
+  `Board`, running rules, or clicking, then retry through the existing polling and
+  timeout path until square `rows == columns == color_count` geometry appears.
 - Made Cats transition detection viewport-aware: advertisement panels, black
   margins, and the BlueStacks toolbar are excluded from overlay geometry;
   `LEVEL_COMPLETE` and `RANKING` are measured inside the detected vertical game

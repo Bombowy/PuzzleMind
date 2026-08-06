@@ -1,6 +1,7 @@
 """Capture BlueStacks and expose validated grid boundaries plus cell geometry."""
 
 import sys
+from itertools import pairwise
 from pathlib import Path
 from time import perf_counter
 from typing import Final
@@ -87,6 +88,16 @@ def print_detection_information(
     print(f"Detected columns: {grid.columns}")
     print(f"Horizontal boundary count: {len(grid.horizontal_lines)}")
     print(f"Vertical boundary count: {len(grid.vertical_lines)}")
+    print(f"Horizontal lines: {grid.horizontal_lines}")
+    print(f"Vertical lines: {grid.vertical_lines}")
+    print(
+        "Row heights: "
+        f"{tuple(bottom - top for top, bottom in pairwise(grid.horizontal_lines))}"
+    )
+    print(
+        "Column widths: "
+        f"{tuple(right - left for left, right in pairwise(grid.vertical_lines))}"
+    )
     print(f"Cell count: {len(grid.cells)}")
     print(f"Grid confidence: {grid.confidence:.3f}")
     print(f"Board detection time: {board_elapsed_seconds:.4f} seconds")

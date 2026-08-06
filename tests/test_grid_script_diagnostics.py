@@ -307,3 +307,28 @@ def test_render_failure_exit_code_remains_four(
 
     assert grid_script.main() == 4
     assert "Grid debug rendering produced no output path." in capsys.readouterr().err
+
+
+def test_success_output_lists_lines_and_cell_extents(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Expose final recovered geometry without capturing or writing another image."""
+
+    screenshot = _screenshot(30, 30)
+    window = WindowInfo("BlueStacks App Player", WindowBounds(0, 0, 30, 30))
+    board = BoardDetection(0, 0, 30, 30, 1.0)
+
+    grid_script.print_detection_information(
+        window,
+        screenshot,
+        board,
+        _valid_grid(),
+        0.01,
+        0.02,
+    )
+
+    output = capsys.readouterr().out
+    assert "Horizontal lines: (0, 30)" in output
+    assert "Vertical lines: (0, 30)" in output
+    assert "Row heights: (30,)" in output
+    assert "Column widths: (30,)" in output

@@ -51,6 +51,7 @@ from logicforge.vision.window_capture import (
 )
 
 CAT_COLUMNS = (1, 3, 0, 2)
+NINE_CAT_COLUMNS = (0, 2, 4, 1, 3, 6, 8, 5, 7)
 COLUMN_COLOR_MATRIX = tuple(
     tuple(f"C{column}" for column in range(4)) for _ in range(4)
 )
@@ -154,12 +155,83 @@ def _board_input(
     )
 
 
+def _geometry_board_input(
+    rows: int,
+    columns: int,
+    color_count: int,
+) -> solve_script.CatsBoardInput:
+    """Build arbitrary Cats input geometry without constructing a logical Board."""
+
+    horizontal = tuple(5 + round(90 * index / rows) for index in range(rows + 1))
+    vertical = tuple(5 + round(70 * index / columns) for index in range(columns + 1))
+    cells = tuple(
+        CellBounds(
+            row=row,
+            column=column,
+            x=vertical[column],
+            y=horizontal[row],
+            width=vertical[column + 1] - vertical[column],
+            height=horizontal[row + 1] - horizontal[row],
+            center_x=(vertical[column] + vertical[column + 1]) // 2,
+            center_y=(horizontal[row] + horizontal[row + 1]) // 2,
+        )
+        for row in range(rows)
+        for column in range(columns)
+    )
+    grid = GridDetection(
+        horizontal_lines=horizontal,
+        vertical_lines=vertical,
+        rows=rows,
+        columns=columns,
+        cells=cells,
+        confidence=0.9,
+    )
+    matrix = tuple(
+        tuple(f"C{(row * columns + column) % color_count}" for column in range(columns))
+        for row in range(rows)
+    )
+    observations = tuple(
+        ColorObservation(
+            row=row,
+            column=column,
+            color_id=matrix[row][column],
+            confidence=0.9,
+            representative_lab=(120.0, 130.0, 140.0),
+        )
+        for row in range(rows)
+        for column in range(columns)
+    )
+    color_result = ColorDetectionResult(
+        observations=observations,
+        color_count=color_count,
+        color_matrix=matrix,
+        mean_confidence=0.9,
+        diagnostics=ColorDetectionDiagnostics(
+            rows=rows,
+            columns=columns,
+            sample_inner_fraction=0.65,
+            cluster_distance_threshold=18.0,
+            sample_pixel_counts=(100,) * (rows * columns),
+            within_cell_spreads=(1.0,) * (rows * columns),
+            cluster_centers_lab=tuple(
+                (120.0 + index, 130.0, 140.0) for index in range(color_count)
+            ),
+            minimum_intercluster_distance=30.0,
+        ),
+    )
+    return solve_script.CatsBoardInput(
+        detected_board=BoardDetection(5, 5, 70, 90, 0.9),
+        grid=grid,
+        color_result=color_result,
+    )
+
+
 def _solved_board(
     board_input: solve_script.CatsBoardInput | None = None,
     *,
     window: WindowInfo | None = None,
     status: str = "COMPLETE",
-    cat_columns: tuple[int, ...] = CAT_COLUMNS,
+    cat_columns: tuple[int, ...] | None = None,
 ) -> solve_script.CatsSolvedBoard:
     """Create one actual mutable Board and immutable solved wrapper."""
 
@@ -167,9 +239,14 @@ def _solved_board(
     actual_window = window or _window()
     logical_board = Board(actual_input.color_result)
     if status == "COMPLETE":
-        for row in range(4):
-            for column in range(4):
-                if column == cat_columns[row]:
+        selected_cat_columns = cat_columns
+        if selected_cat_columns is None:
+            selected_cat_columns = (
+                NINE_CAT_COLUMNS if actual_input.grid.rows == 9 else CAT_COLUMNS
+            )
+        for row in range(actual_input.grid.rows):
+            for column in range(actual_input.grid.columns):
+                if column == selected_cat_columns[row]:
                     logical_board.set_cat(row, column)
                 else:
                     logical_board.set_blocked(row, column)
@@ -630,6 +707,116 @@ def test_new_board_delay_and_old_fingerprint_guard_solver() -> None:
     assert len(solver.calls) == 2
 
 
+@pytest.mark.parametrize("size", (5, 8, 9))
+def test_cats_input_geometry_guard_accepts_consistent_square_sizes(size: int) -> None:
+    """Permit arbitrary square Cats dimensions when color count and matrix agree."""
+
+    autoplay.validate_cats_board_input_geometry(_geometry_board_input(size, size, size))
+
+
+def test_transient_9x8_geometry_never_solves_clicks_or_updates_state(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Retry live-like 9x8/colors=9 evidence before Board construction."""
+
+    invalid_input = _geometry_board_input(9, 8, 9)
+    runner, _, _, _, mouse, _, renderer, analyzer, solver = _runner(
+        (_detection(CatsScreenState.BOARD),),
+        settings=_settings(max_levels=0, timeout=0.25, poll_interval=0.1),
+        board_inputs=(invalid_input,),
+    )
+
+    with pytest.raises(autoplay.CatsAutomationTimeoutError):
+        runner.run()
+    runner.save_failure_overlay()
+
+    output = capsys.readouterr().out
+    assert analyzer.calls > 1
+    assert solver.calls == []
+    assert mouse.clicks == []
+    assert runner.summary().solved_levels == 0
+    assert runner._last_solved_color_matrix is None
+    assert runner._phase is autoplay.CatsAutomationPhase.READY_FOR_BOARD
+    assert "rejected transient geometry: grid=9x8, colors=9" in output
+    assert "new level accepted" not in output
+    assert len(renderer.calls) == 1
+
+
+def test_transient_9x8_then_9x9_solves_only_the_valid_frame(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Re-run the full poll and accept the corrected 9x9 geometry once."""
+
+    invalid_input = _geometry_board_input(9, 8, 9)
+    valid_input = _geometry_board_input(9, 9, 9)
+    runner, _, capturer, _, mouse, _, _, analyzer, solver = _runner(
+        (
+            _detection(CatsScreenState.BOARD),
+            _detection(CatsScreenState.BOARD),
+        ),
+        board_inputs=(invalid_input, valid_input),
+    )
+
+    summary = runner.run()
+
+    assert summary.solved_levels == 1
+    assert len(capturer.calls) == 2
+    assert analyzer.calls == 2
+    assert len(solver.calls) == 1
+    assert solver.calls[0][1] is valid_input
+    assert len(mouse.clicks) == 18
+    assert capsys.readouterr().out.count("new level accepted") == 1
+
+
+def test_cats_input_geometry_guard_rejects_wrong_color_count() -> None:
+    """Reject square 9x9 geometry when immutable vision reports eight colors."""
+
+    with pytest.raises(
+        autoplay.CatsBoardGeometryMismatchError,
+        match=r"grid=9x9, colors=8",
+    ):
+        autoplay.validate_cats_board_input_geometry(_geometry_board_input(9, 9, 8))
+
+
+def test_cats_input_geometry_guard_rejects_matrix_shape_before_solver() -> None:
+    """Validate immutable matrix dimensions before any logical Board is created."""
+
+    invalid_input = _geometry_board_input(9, 9, 9)
+    object.__setattr__(
+        invalid_input.color_result,
+        "color_matrix",
+        invalid_input.color_result.color_matrix[:-1],
+    )
+    runner, _, _, _, mouse, _, _, _, solver = _runner(
+        (_detection(CatsScreenState.BOARD),),
+        settings=_settings(max_levels=0, timeout=0.15),
+        board_inputs=(invalid_input,),
+    )
+
+    with pytest.raises(autoplay.CatsAutomationTimeoutError):
+        runner.run()
+
+    assert solver.calls == []
+    assert mouse.clicks == []
+
+
+def test_dry_run_9x8_returns_typed_validation_failure_without_click() -> None:
+    """Surface controlled code-8-compatible geometry failure in one dry poll."""
+
+    runner, _, capturer, _, mouse, _, _, _, solver = _runner(
+        (_detection(CatsScreenState.BOARD),),
+        settings=_settings(execute=False),
+        board_inputs=(_geometry_board_input(9, 8, 9),),
+    )
+
+    with pytest.raises(autoplay.CatsBoardGeometryMismatchError):
+        runner.run()
+
+    assert len(capturer.calls) == 1
+    assert solver.calls == []
+    assert mouse.clicks == []
+
+
 def test_complete_validation_happens_before_first_cat_click(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1064,6 +1251,7 @@ def test_successful_session_does_not_save_failure_overlay() -> None:
         (BoardStateError("board state"), 6),
         (solve_script.CatClickPlanError("plan"), 7),
         (autoplay.CatsSolutionValidationError("validation"), 8),
+        (autoplay.CatsBoardGeometryMismatchError("geometry"), 8),
         (MouseAutomationError("mouse"), 9),
         (solve_script.CatClickExecutionError("execution"), 9),
         (autoplay.CatsAutomationTimeoutError("timeout"), 10),

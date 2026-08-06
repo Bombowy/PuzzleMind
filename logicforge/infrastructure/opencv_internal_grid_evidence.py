@@ -7,7 +7,8 @@ grid, but it does not expose cells or grid geometry to parsing code.
 
 from dataclasses import dataclass
 from itertools import pairwise
-from statistics import fmean, pstdev
+from math import floor
+from statistics import fmean, median, pstdev
 from typing import Protocol, cast
 
 import cv2
@@ -45,6 +46,17 @@ class InternalGridEvidence:
     horizontal_line_coverage: float
     vertical_line_coverage: float
     score: float
+
+
+@dataclass(frozen=True, slots=True)
+class _AxisLineEvidence:
+    """Keep backend-only strong and weak evidence for one separator axis."""
+
+    positions: tuple[float, ...]
+    coverages: tuple[float, ...]
+    recovered_positions: tuple[float, ...]
+    strong_projection: NDArray[np.float64]
+    weak_projection: NDArray[np.float64]
 
 
 class InternalGridEvidenceAnalyzer(Protocol):
@@ -86,8 +98,9 @@ class OpenCvInternalGridEvidenceAnalyzer:
         """Return deterministic primitive evidence for one grayscale candidate ROI."""
 
         height, width = grayscale_roi.shape
-        normalized = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(
-            grayscale_roi
+        normalized = cast(
+            NDArray[np.uint8],
+            cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(grayscale_roi),
         )
         edges = cast(
             NDArray[np.uint8],
@@ -138,9 +151,55 @@ class OpenCvInternalGridEvidenceAnalyzer:
             vertical_mask,
             horizontal=False,
         )
+        horizontal_axis = _AxisLineEvidence(
+            positions=horizontal_internal,
+            coverages=horizontal_coverages,
+            recovered_positions=(),
+            strong_projection=self._directional_projection(
+                horizontal_mask,
+                horizontal=True,
+            ),
+            weak_projection=self._weak_line_projection(
+                normalized,
+                combined_edges,
+                horizontal=True,
+            ),
+        )
+        vertical_axis = _AxisLineEvidence(
+            positions=vertical_internal,
+            coverages=vertical_coverages,
+            recovered_positions=(),
+            strong_projection=self._directional_projection(
+                vertical_mask,
+                horizontal=False,
+            ),
+            weak_projection=self._weak_line_projection(
+                normalized,
+                combined_edges,
+                horizontal=False,
+            ),
+        )
+        if (
+            self._settings.grid_missing_line_recovery_enabled
+            and self._settings.grid_missing_line_maximum_recovered_per_axis > 0
+        ):
+            horizontal_axis = self._recover_single_missing_line(
+                horizontal_axis,
+                axis_length=height,
+                maximum_spacing_cv=(
+                    self._settings.maximum_horizontal_spacing_coefficient_of_variation
+                ),
+            )
+            vertical_axis = self._recover_single_missing_line(
+                vertical_axis,
+                axis_length=width,
+                maximum_spacing_cv=(
+                    self._settings.maximum_vertical_spacing_coefficient_of_variation
+                ),
+            )
 
-        horizontal_positions = (0.0, *horizontal_internal, 1.0)
-        vertical_positions = (0.0, *vertical_internal, 1.0)
+        horizontal_positions = (0.0, *horizontal_axis.positions, 1.0)
+        vertical_positions = (0.0, *vertical_axis.positions, 1.0)
         horizontal_cv, horizontal_regularity = self._spacing_metrics(
             horizontal_positions,
             self._settings.maximum_horizontal_spacing_coefficient_of_variation,
@@ -150,9 +209,11 @@ class OpenCvInternalGridEvidenceAnalyzer:
             self._settings.maximum_vertical_spacing_coefficient_of_variation,
         )
         horizontal_coverage = (
-            fmean(horizontal_coverages) if horizontal_coverages else 0.0
+            fmean(horizontal_axis.coverages) if horizontal_axis.coverages else 0.0
         )
-        vertical_coverage = fmean(vertical_coverages) if vertical_coverages else 0.0
+        vertical_coverage = (
+            fmean(vertical_axis.coverages) if vertical_axis.coverages else 0.0
+        )
         horizontal_count = len(horizontal_positions)
         vertical_count = len(vertical_positions)
         estimated_rows = max(0, horizontal_count - 1)
@@ -245,26 +306,108 @@ class OpenCvInternalGridEvidenceAnalyzer:
         edges: NDArray[np.uint8],
         *,
         horizontal: bool,
+        weak: bool = False,
     ) -> NDArray[np.uint8]:
         """Retain axis-aligned edge runs long enough to represent separators."""
 
         height, width = edges.shape
         if horizontal:
+            relative_length = (
+                self._settings.grid_weak_horizontal_line_kernel_relative_length
+                if weak
+                else self._settings.horizontal_line_kernel_relative_length
+            )
             length = max(
                 3,
-                round(width * self._settings.horizontal_line_kernel_relative_length),
+                round(width * relative_length),
             )
             kernel_shape = (length, 1)
         else:
+            relative_length = (
+                self._settings.grid_weak_vertical_line_kernel_relative_length
+                if weak
+                else self._settings.vertical_line_kernel_relative_length
+            )
             length = max(
                 3,
-                round(height * self._settings.vertical_line_kernel_relative_length),
+                round(height * relative_length),
             )
             kernel_shape = (1, length)
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, kernel_shape)
         return cast(
             NDArray[np.uint8],
             cv2.morphologyEx(edges, cv2.MORPH_OPEN, kernel),
+        )
+
+    def _weak_line_projection(
+        self,
+        normalized: NDArray[np.uint8],
+        combined_edges: NDArray[np.uint8],
+        *,
+        horizontal: bool,
+    ) -> NDArray[np.float64]:
+        """Combine normalized short-run morphology with an axis Sobel profile."""
+
+        weak_mask = self._extract_directional_lines(
+            combined_edges,
+            horizontal=horizontal,
+            weak=True,
+        )
+        directional_projection = self._directional_projection(
+            weak_mask,
+            horizontal=horizontal,
+        )
+        derivative_x, derivative_y = (0, 1) if horizontal else (1, 0)
+        gradient = np.abs(
+            cv2.Sobel(
+                normalized,
+                cv2.CV_64F,
+                derivative_x,
+                derivative_y,
+                ksize=3,
+            )
+        )
+        maximum_gradient = float(np.max(gradient)) if gradient.size else 0.0
+        if maximum_gradient > 0.0:
+            normalized_gradient = gradient / maximum_gradient
+        else:
+            normalized_gradient = np.zeros_like(gradient, dtype=np.float64)
+        gradient_projection = np.mean(
+            normalized_gradient,
+            axis=1 if horizontal else 0,
+            dtype=np.float64,
+        )
+        return cast(
+            NDArray[np.float64],
+            np.clip(
+                np.maximum(directional_projection, gradient_projection),
+                0.0,
+                1.0,
+            ).astype(np.float64),
+        )
+
+    @staticmethod
+    def _directional_projection(
+        line_mask: NDArray[np.uint8],
+        *,
+        horizontal: bool,
+    ) -> NDArray[np.float64]:
+        """Normalize directional line coverage into one bounded axis profile."""
+
+        height, width = line_mask.shape
+        if horizontal:
+            raw_projection = np.count_nonzero(line_mask, axis=1)
+            normalization_length = width
+        else:
+            raw_projection = np.count_nonzero(line_mask, axis=0)
+            normalization_length = height
+        return cast(
+            NDArray[np.float64],
+            np.clip(
+                raw_projection.astype(np.float64) / max(1, normalization_length),
+                0.0,
+                1.0,
+            ).astype(np.float64),
         )
 
     def _cluster_line_responses(
@@ -277,14 +420,13 @@ class OpenCvInternalGridEvidenceAnalyzer:
 
         height, width = line_mask.shape
         if horizontal:
-            raw_projection = np.count_nonzero(line_mask, axis=1)
-            normalization_length = width
             axis_length = height
         else:
-            raw_projection = np.count_nonzero(line_mask, axis=0)
-            normalization_length = height
             axis_length = width
-        projection = raw_projection.astype(np.float64) / normalization_length
+        projection = self._directional_projection(
+            line_mask,
+            horizontal=horizontal,
+        )
         response_indices = np.flatnonzero(
             projection >= self._settings.minimum_grid_line_response
         ).tolist()
@@ -324,6 +466,124 @@ class OpenCvInternalGridEvidenceAnalyzer:
             normalized_positions.append(_clamp_unit(center / denominator))
             coverages.append(_clamp_unit(max(weights)))
         return tuple(normalized_positions), tuple(coverages)
+
+    def _recover_single_missing_line(
+        self,
+        axis: _AxisLineEvidence,
+        *,
+        axis_length: int,
+        maximum_spacing_cv: float,
+    ) -> _AxisLineEvidence:
+        """Recover one image-supported separator from one otherwise regular gap."""
+
+        if len(axis.positions) < 3 or axis_length < 3:
+            return axis
+        boundaries = (0.0, *axis.positions, 1.0)
+        gaps = tuple(current - previous for previous, current in pairwise(boundaries))
+        typical_spacing = median(gaps)
+        if typical_spacing <= 0.0:
+            return axis
+
+        large_gap_indices = tuple(
+            index
+            for index, gap in enumerate(gaps)
+            if (
+                self._settings.grid_missing_line_minimum_gap_factor
+                <= gap / typical_spacing
+                <= self._settings.grid_missing_line_maximum_gap_factor
+            )
+        )
+        if len(large_gap_indices) != 1:
+            return axis
+        large_gap_index = large_gap_indices[0]
+        if large_gap_index in (0, len(gaps) - 1):
+            return axis
+        other_gaps = tuple(
+            gap for index, gap in enumerate(gaps) if index != large_gap_index
+        )
+        if any(
+            abs(gap - typical_spacing) / typical_spacing
+            > self._settings.grid_missing_line_maximum_other_gap_deviation
+            for gap in other_gaps
+        ):
+            return axis
+
+        gap_left = boundaries[large_gap_index]
+        gap_right = boundaries[large_gap_index + 1]
+        expected = (gap_left + gap_right) / 2.0
+        border_tolerance = self._settings.grid_border_line_exclusion_tolerance
+        if expected <= border_tolerance or expected >= 1.0 - border_tolerance:
+            return axis
+        denominator = axis_length - 1
+        expected_pixel = expected * denominator
+        search_radius = max(
+            1,
+            round(
+                typical_spacing
+                * self._settings.grid_missing_line_search_half_width_fraction
+                * denominator
+            ),
+        )
+        search_start = max(1, floor(expected_pixel - search_radius))
+        search_end = min(axis_length - 2, floor(expected_pixel + search_radius))
+        local_peaks = tuple(
+            index
+            for index in range(search_start, search_end + 1)
+            if (
+                axis.weak_projection[index] >= axis.weak_projection[index - 1]
+                and axis.weak_projection[index] >= axis.weak_projection[index + 1]
+            )
+        )
+        if not local_peaks:
+            return axis
+        peak_index = min(
+            local_peaks,
+            key=lambda index: (
+                -float(axis.weak_projection[index]),
+                abs(index - expected_pixel),
+                index,
+            ),
+        )
+        peak_response = float(axis.weak_projection[peak_index])
+        if peak_response < self._settings.grid_missing_line_minimum_weak_response:
+            return axis
+        recovered_position = peak_index / denominator
+        if min(abs(recovered_position - position) for position in boundaries) <= (
+            self._settings.grid_line_cluster_distance_relative
+        ):
+            return axis
+
+        combined = sorted(
+            (
+                *zip(axis.positions, axis.coverages, strict=True),
+                (recovered_position, _clamp_unit(peak_response)),
+            ),
+            key=lambda item: item[0],
+        )
+        recovered_positions = tuple(position for position, _ in combined)
+        recovered_coverages = tuple(coverage for _, coverage in combined)
+        final_boundaries = (0.0, *recovered_positions, 1.0)
+        converted_pixels = tuple(
+            floor(position * axis_length + 0.5) for position in final_boundaries
+        )
+        if len(converted_pixels) != len(set(converted_pixels)):
+            return axis
+
+        old_cv, _ = self._spacing_metrics(boundaries, maximum_spacing_cv)
+        new_cv, _ = self._spacing_metrics(final_boundaries, maximum_spacing_cv)
+        if new_cv >= old_cv:
+            return axis
+        if old_cv - new_cv < self._settings.grid_missing_line_minimum_cv_improvement:
+            return axis
+        if new_cv > maximum_spacing_cv:
+            return axis
+        return _AxisLineEvidence(
+            positions=recovered_positions,
+            coverages=recovered_coverages,
+            recovered_positions=(recovered_position,),
+            strong_projection=axis.strong_projection,
+            weak_projection=axis.weak_projection,
+        )
 
     @staticmethod
     def _spacing_metrics(
