@@ -2,6 +2,7 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from math import isfinite
 
 from logicforge.vision.screenshot import Screenshot
 
@@ -54,13 +55,61 @@ class BoardCandidateDiagnostic:
 
 
 @dataclass(frozen=True, slots=True)
+class BoardEnvelopeRefinementDiagnostic:
+    """Describe one primitive, backend-neutral grid-envelope extension attempt."""
+
+    seed_x: int
+    seed_y: int
+    seed_width: int
+    seed_height: int
+    refined_x: int
+    refined_y: int
+    refined_width: int
+    refined_height: int
+    direction: str
+    added_pixels: int
+    seed_rows: int
+    seed_columns: int
+    refined_rows: int
+    refined_columns: int
+    old_border_match_score: float
+    separator_continuation_score: float
+    supported_separator_fraction: float
+    spacing_score: float
+    refined_grid_score: float
+    refinement_score: float
+    accepted: bool
+    rejection_reasons: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        """Keep public refinement diagnostics finite, bounded, and primitive."""
+
+        if self.direction not in {"left", "right", "top", "bottom"}:
+            raise ValueError("Board-envelope refinement direction is invalid.")
+        scores = (
+            self.old_border_match_score,
+            self.separator_continuation_score,
+            self.supported_separator_fraction,
+            self.spacing_score,
+            self.refined_grid_score,
+            self.refinement_score,
+        )
+        if any(not isfinite(score) or not 0.0 <= score <= 1.0 for score in scores):
+            raise ValueError(
+                "Board-envelope refinement scores must be finite within 0.0 and 1.0."
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class BoardDetectionDiagnostics:
-    """Summarize contour evaluation and ambiguity for one detector invocation."""
+    """Summarize contour seeds, envelope refinement, and final selection."""
 
     contour_count: int
     candidates: tuple[BoardCandidateDiagnostic, ...]
     selected_candidate: BoardCandidateDiagnostic | None
     competitive_candidate_count: int
+    envelope_refinements: tuple[BoardEnvelopeRefinementDiagnostic, ...] = ()
+    selected_refinement: BoardEnvelopeRefinementDiagnostic | None = None
 
 
 @dataclass(frozen=True, slots=True)

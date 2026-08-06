@@ -11,6 +11,7 @@ from logicforge.vision.board_detector import (
     BoardCandidateDiagnostic,
     BoardDetectionAnalysis,
     BoardDetectionDiagnostics,
+    BoardEnvelopeRefinementDiagnostic,
 )
 from logicforge.vision.screenshot import Screenshot
 
@@ -30,6 +31,9 @@ class OpenCvBoardDetectionDebugRenderer:
     _SELECTED_COLOR = (40, 220, 40)
     _ACCEPTED_COLOR = (0, 190, 255)
     _REJECTED_COLOR = (80, 80, 220)
+    _SEED_COLOR = (255, 180, 40)
+    _ADDED_BAND_COLOR = (40, 180, 255)
+    _REJECTED_REFINEMENT_COLOR = (140, 80, 220)
     _HORIZONTAL_GRID_COLOR = (255, 210, 0)
     _VERTICAL_GRID_COLOR = (220, 80, 255)
     _TEXT_COLOR = (255, 255, 255)
@@ -71,11 +75,23 @@ class OpenCvBoardDetectionDebugRenderer:
                     1,
                 )
                 self._draw_candidate_grid_label(overlay, candidate, color)
+            for refinement in analysis.diagnostics.envelope_refinements:
+                if refinement.accepted:
+                    continue
+                self._draw_refinement_rectangle(
+                    overlay,
+                    refinement,
+                    self._REJECTED_REFINEMENT_COLOR,
+                    thickness=1,
+                )
 
         detection = analysis.detection
         selected_candidate = analysis.diagnostics.selected_candidate
+        selected_refinement = analysis.diagnostics.selected_refinement
         if draw_grid_lines and selected_candidate is not None:
             self._draw_grid_lines(overlay, selected_candidate)
+        if selected_refinement is not None:
+            self._draw_selected_refinement(overlay, selected_refinement)
         cv2.rectangle(
             overlay,
             (detection.x, detection.y),
@@ -113,6 +129,15 @@ class OpenCvBoardDetectionDebugRenderer:
                 overlay,
                 candidate,
                 self._REJECTED_COLOR,
+            )
+        for refinement in diagnostics.envelope_refinements:
+            if refinement.accepted:
+                continue
+            self._draw_refinement_rectangle(
+                overlay,
+                refinement,
+                self._REJECTED_REFINEMENT_COLOR,
+                thickness=1,
             )
         return overlay
 
@@ -165,7 +190,7 @@ class OpenCvBoardDetectionDebugRenderer:
             raise BoardDebugRenderError(
                 "A successful board analysis must identify its selected candidate."
             )
-        lines = (
+        lines: tuple[str, ...] = (
             f"x={detection.x}, y={detection.y}",
             f"width={detection.width}, height={detection.height}",
             f"confidence={detection.confidence:.3f}",
@@ -179,6 +204,22 @@ class OpenCvBoardDetectionDebugRenderer:
             ),
             f"grid evidence={selected.grid_evidence_score:.3f}",
         )
+        refinement = analysis.diagnostics.selected_refinement
+        if refinement is not None:
+            lines = (
+                *lines[:3],
+                (
+                    f"seed={refinement.seed_rows}x{refinement.seed_columns}, "
+                    f"refined={refinement.refined_rows}x{refinement.refined_columns}"
+                ),
+                f"direction={refinement.direction}, added={refinement.added_pixels}px",
+                (
+                    f"continuation={refinement.separator_continuation_score:.3f}, "
+                    f"supported={refinement.supported_separator_fraction:.3f}"
+                ),
+                f"refinement={refinement.refinement_score:.3f}",
+                f"grid evidence={refinement.refined_grid_score:.3f}",
+            )
         origin_x = max(8, detection.x)
         line_step = 22
         required_height = len(lines) * line_step + 10
@@ -256,6 +297,96 @@ class OpenCvBoardDetectionDebugRenderer:
                 1,
                 cv2.LINE_AA,
             )
+
+    def _draw_selected_refinement(
+        self,
+        overlay: NDArray[np.uint8],
+        refinement: BoardEnvelopeRefinementDiagnostic,
+    ) -> None:
+        """Show the contour seed and the verified newly added cell band."""
+
+        band_x, band_y, band_width, band_height = self._added_band_rectangle(refinement)
+        tinted = overlay.copy()
+        cv2.rectangle(
+            tinted,
+            (band_x, band_y),
+            (band_x + band_width, band_y + band_height),
+            self._ADDED_BAND_COLOR,
+            cv2.FILLED,
+        )
+        cv2.addWeighted(tinted, 0.20, overlay, 0.80, 0.0, overlay)
+        cv2.rectangle(
+            overlay,
+            (band_x, band_y),
+            (band_x + band_width, band_y + band_height),
+            self._ADDED_BAND_COLOR,
+            2,
+        )
+        cv2.rectangle(
+            overlay,
+            (refinement.seed_x, refinement.seed_y),
+            (
+                refinement.seed_x + refinement.seed_width,
+                refinement.seed_y + refinement.seed_height,
+            ),
+            self._SEED_COLOR,
+            1,
+        )
+
+    @staticmethod
+    def _added_band_rectangle(
+        refinement: BoardEnvelopeRefinementDiagnostic,
+    ) -> tuple[int, int, int, int]:
+        """Derive the one-cell difference between the seed and refined envelope."""
+
+        if refinement.direction == "left":
+            return (
+                refinement.refined_x,
+                refinement.refined_y,
+                refinement.added_pixels,
+                refinement.refined_height,
+            )
+        if refinement.direction == "right":
+            return (
+                refinement.seed_x + refinement.seed_width,
+                refinement.refined_y,
+                refinement.added_pixels,
+                refinement.refined_height,
+            )
+        if refinement.direction == "top":
+            return (
+                refinement.refined_x,
+                refinement.refined_y,
+                refinement.refined_width,
+                refinement.added_pixels,
+            )
+        return (
+            refinement.refined_x,
+            refinement.seed_y + refinement.seed_height,
+            refinement.refined_width,
+            refinement.added_pixels,
+        )
+
+    @staticmethod
+    def _draw_refinement_rectangle(
+        overlay: NDArray[np.uint8],
+        refinement: BoardEnvelopeRefinementDiagnostic,
+        color: tuple[int, int, int],
+        *,
+        thickness: int,
+    ) -> None:
+        """Draw one rejected or accepted refined rectangle from public primitives."""
+
+        cv2.rectangle(
+            overlay,
+            (refinement.refined_x, refinement.refined_y),
+            (
+                refinement.refined_x + refinement.refined_width,
+                refinement.refined_y + refinement.refined_height,
+            ),
+            color,
+            thickness,
+        )
 
     @staticmethod
     def _draw_candidate_grid_label(

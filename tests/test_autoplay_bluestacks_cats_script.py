@@ -714,6 +714,24 @@ def test_cats_input_geometry_guard_accepts_consistent_square_sizes(size: int) ->
     autoplay.validate_cats_board_input_geometry(_geometry_board_input(size, size, size))
 
 
+def test_generic_refined_9x9_reaches_guard_and_solver_without_autoplay_repair() -> None:
+    """Consume final generic vision geometry exactly once through existing ports."""
+
+    refined_input = _geometry_board_input(9, 9, 9)
+    runner, _, _, _, mouse, _, _, analyzer, solver = _runner(
+        (_detection(CatsScreenState.BOARD),),
+        board_inputs=(refined_input,),
+    )
+
+    summary = runner.run()
+
+    assert analyzer.calls == 1
+    assert len(solver.calls) == 1
+    assert solver.calls[0][1] is refined_input
+    assert summary.solved_levels == 1
+    assert len(mouse.clicks) == 18
+
+
 def test_transient_9x8_geometry_never_solves_clicks_or_updates_state(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

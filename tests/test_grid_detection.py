@@ -10,6 +10,7 @@ import pytest
 from numpy.typing import NDArray
 
 from logicforge.config.settings import BoardDetectionSettings, GridExtractionSettings
+from logicforge.infrastructure.opencv_board_detector import OpenCvBoardDetector
 from logicforge.infrastructure.opencv_grid_detection_renderer import (
     OpenCvGridDetectionDebugRenderer,
 )
@@ -25,6 +26,7 @@ from synthetic_vision import (
     custom_grid_screenshot,
     live_like_9x9_weak_grid_case,
     screenshot_from_image,
+    truncated_outer_grid_envelope_screenshot,
     weak_separator_grid_case,
 )
 
@@ -253,6 +255,56 @@ def test_repeated_detection_is_exactly_deterministic() -> None:
     results = tuple(detector.detect(screenshot, board) for _ in range(3))
 
     assert results[0] == results[1] == results[2]
+
+
+def test_board_refinement_then_grid_detection_tiles_full_low_contrast_9x9() -> None:
+    """Consume the final generic board envelope without a second repair path."""
+
+    screenshot, _ = truncated_outer_grid_envelope_screenshot(
+        rows=9,
+        columns=9,
+        clipped_side="right",
+    )
+    analysis = OpenCvBoardDetector().analyze(screenshot)
+    board = analysis.detection
+    seed = analysis.diagnostics.selected_candidate
+
+    grid = OpenCvGridDetector().detect(screenshot, board)
+
+    assert seed is not None
+    assert (grid.rows, grid.columns) == (9, 9)
+    assert len(grid.horizontal_lines) == 10
+    assert len(grid.vertical_lines) == 10
+    assert len(grid.cells) == 81
+    old_border_tolerance = max(4, round((board.width / grid.columns) * 0.12))
+    assert (
+        min(abs(line - (seed.x + seed.width)) for line in grid.vertical_lines)
+        <= old_border_tolerance
+    )
+    assert all(cell.width > 0 and cell.height > 0 for cell in grid.cells)
+    for row in range(grid.rows):
+        cells = grid.cells[row * grid.columns : (row + 1) * grid.columns]
+        assert cells[0].x == board.x
+        assert cells[-1].x + cells[-1].width == board.x + board.width
+        assert all(left.x + left.width == right.x for left, right in pairwise(cells))
+
+
+def test_grid_detector_does_not_expand_a_contour_seed_by_itself() -> None:
+    """Keep maximal-envelope ownership exclusively inside OpenCvBoardDetector."""
+
+    screenshot, _ = truncated_outer_grid_envelope_screenshot(
+        rows=9,
+        columns=9,
+        clipped_side="right",
+    )
+    seed = OpenCvBoardDetector(
+        BoardDetectionSettings(grid_envelope_refinement_enabled=False)
+    ).detect(screenshot)
+
+    grid = OpenCvGridDetector().detect(screenshot, seed)
+
+    assert (grid.rows, grid.columns) == (9, 8)
+    assert len(grid.cells) == 72
 
 
 @pytest.mark.parametrize("weakened_line_index", (2, 4, 6, 7))

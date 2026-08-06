@@ -60,6 +60,20 @@ class BoardDetectionSettings:
     grid_missing_line_maximum_other_gap_deviation: float = 0.30
     grid_missing_line_minimum_cv_improvement: float = 0.05
     grid_missing_line_maximum_recovered_per_axis: int = 1
+    grid_envelope_refinement_enabled: bool = True
+    grid_envelope_maximum_added_cells_per_side: int = 1
+    grid_envelope_minimum_seed_rows: int = 3
+    grid_envelope_minimum_seed_columns: int = 3
+    grid_envelope_minimum_added_size_ratio: float = 0.75
+    grid_envelope_maximum_added_size_ratio: float = 1.25
+    grid_envelope_separator_position_tolerance_ratio: float = 0.18
+    grid_envelope_continuation_probe_thickness_ratio: float = 0.08
+    grid_envelope_minimum_line_continuation_response: float = 0.12
+    grid_envelope_minimum_supported_separator_fraction: float = 0.65
+    grid_envelope_maximum_spacing_cv_increase: float = 0.03
+    grid_envelope_maximum_grid_score_drop: float = 0.08
+    grid_envelope_minimum_refinement_score: float = 0.63
+    grid_envelope_ambiguity_delta: float = 0.03
     grid_adaptive_block_relative_size: float = 0.061
     grid_adaptive_constant: float = 5.0
     geometry_confidence_weight: float = 0.40
@@ -131,6 +145,28 @@ class BoardDetectionSettings:
             "grid_missing_line_minimum_cv_improvement": (
                 self.grid_missing_line_minimum_cv_improvement
             ),
+            "grid_envelope_separator_position_tolerance_ratio": (
+                self.grid_envelope_separator_position_tolerance_ratio
+            ),
+            "grid_envelope_continuation_probe_thickness_ratio": (
+                self.grid_envelope_continuation_probe_thickness_ratio
+            ),
+            "grid_envelope_minimum_line_continuation_response": (
+                self.grid_envelope_minimum_line_continuation_response
+            ),
+            "grid_envelope_minimum_supported_separator_fraction": (
+                self.grid_envelope_minimum_supported_separator_fraction
+            ),
+            "grid_envelope_maximum_spacing_cv_increase": (
+                self.grid_envelope_maximum_spacing_cv_increase
+            ),
+            "grid_envelope_maximum_grid_score_drop": (
+                self.grid_envelope_maximum_grid_score_drop
+            ),
+            "grid_envelope_minimum_refinement_score": (
+                self.grid_envelope_minimum_refinement_score
+            ),
+            "grid_envelope_ambiguity_delta": self.grid_envelope_ambiguity_delta,
             "grid_adaptive_block_relative_size": (
                 self.grid_adaptive_block_relative_size
             ),
@@ -175,6 +211,12 @@ class BoardDetectionSettings:
             ),
             "grid_missing_line_search_half_width_fraction": (
                 self.grid_missing_line_search_half_width_fraction
+            ),
+            "grid_envelope_separator_position_tolerance_ratio": (
+                self.grid_envelope_separator_position_tolerance_ratio
+            ),
+            "grid_envelope_continuation_probe_thickness_ratio": (
+                self.grid_envelope_continuation_probe_thickness_ratio
             ),
             "grid_adaptive_block_relative_size": (
                 self.grid_adaptive_block_relative_size
@@ -266,6 +308,36 @@ class BoardDetectionSettings:
             raise ValueError(
                 "grid_missing_line_maximum_recovered_per_axis must be 0 or 1."
             )
+        added_size_ratios = (
+            self.grid_envelope_minimum_added_size_ratio,
+            self.grid_envelope_maximum_added_size_ratio,
+        )
+        if any(not isfinite(value) for value in added_size_ratios):
+            raise ValueError("Grid-envelope added-size ratios must be finite.")
+        if not 0.0 < added_size_ratios[0] < 1.0 < added_size_ratios[1]:
+            raise ValueError(
+                "Grid-envelope added-size ratios must satisfy "
+                "0 < minimum < 1 < maximum."
+            )
+        if not isinstance(
+            self.grid_envelope_maximum_added_cells_per_side, int
+        ) or isinstance(self.grid_envelope_maximum_added_cells_per_side, bool):
+            raise ValueError(
+                "grid_envelope_maximum_added_cells_per_side must be an integer."
+            )
+        if not 0 <= self.grid_envelope_maximum_added_cells_per_side <= 1:
+            raise ValueError(
+                "grid_envelope_maximum_added_cells_per_side must be 0 or 1."
+            )
+        seed_counts = {
+            "grid_envelope_minimum_seed_rows": self.grid_envelope_minimum_seed_rows,
+            "grid_envelope_minimum_seed_columns": (
+                self.grid_envelope_minimum_seed_columns
+            ),
+        }
+        for field_name, value in seed_counts.items():
+            if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+                raise ValueError(f"{field_name} must be a positive integer.")
         if (
             not abs(self.geometry_confidence_weight + self.grid_confidence_weight - 1.0)
             < 1e-9

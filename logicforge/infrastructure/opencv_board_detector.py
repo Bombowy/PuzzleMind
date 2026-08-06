@@ -1,7 +1,7 @@
 """Classical OpenCV adapter for deterministic rectangular board localization."""
 
 from collections import Counter
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from math import hypot
 from typing import cast
 
@@ -10,6 +10,9 @@ import numpy as np
 from numpy.typing import NDArray
 
 from logicforge.config.settings import BoardDetectionSettings
+from logicforge.infrastructure.opencv_grid_envelope_refinement import (
+    OpenCvGridEnvelopeRefiner,
+)
 from logicforge.infrastructure.opencv_internal_grid_evidence import (
     InternalGridEvidence,
     OpenCvInternalGridEvidenceAnalyzer,
@@ -21,6 +24,7 @@ from logicforge.vision.board_detector import (
     BoardDetectionDiagnostics,
     BoardDetectionError,
     BoardDetector,
+    BoardEnvelopeRefinementDiagnostic,
 )
 from logicforge.vision.screenshot import Screenshot
 
@@ -73,6 +77,28 @@ def _intersection_over_union(
     return intersection_area / union_area if union_area else 0.0
 
 
+@dataclass(frozen=True, slots=True)
+class _BoardSeedCandidate:
+    """Keep one contour diagnostic paired with its exact internal grid evidence."""
+
+    diagnostic: BoardCandidateDiagnostic
+    grid_evidence: InternalGridEvidence
+
+
+@dataclass(frozen=True, slots=True)
+class _BoardFamilyCandidate:
+    """Represent one seed's verified maximal envelope for final selection."""
+
+    seed: _BoardSeedCandidate
+    x: int
+    y: int
+    width: int
+    height: int
+    grid_evidence: InternalGridEvidence
+    confidence: float
+    refinement: BoardEnvelopeRefinementDiagnostic | None
+
+
 class OpenCvBoardDetector(BoardDetector):
     """Locate a puzzle board through edges, thresholding, contours, and scoring.
 
@@ -87,6 +113,10 @@ class OpenCvBoardDetector(BoardDetector):
 
         self._settings = settings or BoardDetectionSettings()
         self._grid_analyzer = OpenCvInternalGridEvidenceAnalyzer(self._settings)
+        self._envelope_refiner = OpenCvGridEnvelopeRefiner(
+            self._settings,
+            self._grid_analyzer,
+        )
 
     def detect(self, screenshot: Screenshot) -> BoardDetection:
         """Return the highest-confidence reliable rectangle."""
@@ -161,11 +191,11 @@ class OpenCvBoardDetector(BoardDetector):
             )
             contours.extend(mask_contours)
 
-        candidates = [
-            candidate
+        seed_candidates = [
+            seed
             for contour in contours
             if (
-                candidate := self._evaluate_contour(
+                seed := self._evaluate_contour(
                     contour,
                     grayscale,
                     edges,
@@ -175,10 +205,16 @@ class OpenCvBoardDetector(BoardDetector):
             )
             is not None
         ]
-        deduplicated_candidates = self._suppress_duplicates(candidates)
+        deduplicated_seeds = self._suppress_duplicates(seed_candidates)
+        families, refinements = self._refine_seed_families(
+            grayscale,
+            deduplicated_seeds,
+        )
         return self._select_detection(
             contour_count=len(contours),
-            candidates=deduplicated_candidates,
+            seeds=deduplicated_seeds,
+            families=families,
+            refinements=refinements,
         )
 
     def _create_morphology_kernel(self, width: int, height: int) -> NDArray[np.uint8]:
@@ -217,7 +253,7 @@ class OpenCvBoardDetector(BoardDetector):
         edges: NDArray[np.uint8],
         screenshot_width: int,
         screenshot_height: int,
-    ) -> BoardCandidateDiagnostic | None:
+    ) -> _BoardSeedCandidate | None:
         """Convert one sufficiently large contour into measurements and decisions."""
 
         x, y, width, height = cv2.boundingRect(contour)
@@ -287,7 +323,7 @@ class OpenCvBoardDetector(BoardDetector):
                 self._grid_analyzer.rejection_reasons(grid_evidence)
             )
         confidence = self._final_confidence(geometry_score, grid_evidence.score)
-        return BoardCandidateDiagnostic(
+        diagnostic = BoardCandidateDiagnostic(
             x=x,
             y=y,
             width=width,
@@ -318,6 +354,10 @@ class OpenCvBoardDetector(BoardDetector):
             confidence=confidence,
             accepted=not rejection_reasons,
             rejection_reasons=tuple(rejection_reasons),
+        )
+        return _BoardSeedCandidate(
+            diagnostic=diagnostic,
+            grid_evidence=grid_evidence,
         )
 
     def _location_score(
@@ -434,14 +474,17 @@ class OpenCvBoardDetector(BoardDetector):
 
     def _suppress_duplicates(
         self,
-        candidates: list[BoardCandidateDiagnostic],
-    ) -> tuple[BoardCandidateDiagnostic, ...]:
+        candidates: list[_BoardSeedCandidate],
+    ) -> tuple[_BoardSeedCandidate, ...]:
         """Mark overlapping contour duplicates while preserving diagnostic evidence."""
 
-        ordered = sorted(candidates, key=self._candidate_sort_key)
+        ordered = sorted(
+            candidates, key=lambda seed: self._candidate_sort_key(seed.diagnostic)
+        )
         accepted_unique: list[BoardCandidateDiagnostic] = []
-        results: list[BoardCandidateDiagnostic] = []
-        for candidate in ordered:
+        results: list[_BoardSeedCandidate] = []
+        for seed in ordered:
+            candidate = seed.diagnostic
             is_duplicate = candidate.accepted and any(
                 _intersection_over_union(candidate, accepted)
                 >= self._settings.duplicate_iou_threshold
@@ -450,48 +493,134 @@ class OpenCvBoardDetector(BoardDetector):
             if is_duplicate:
                 results.append(
                     replace(
-                        candidate,
-                        accepted=False,
-                        rejection_reasons=(
-                            *candidate.rejection_reasons,
-                            "duplicate candidate geometry",
+                        seed,
+                        diagnostic=replace(
+                            candidate,
+                            accepted=False,
+                            rejection_reasons=(
+                                *candidate.rejection_reasons,
+                                "duplicate candidate geometry",
+                            ),
                         ),
                     )
                 )
                 continue
 
-            results.append(candidate)
+            results.append(seed)
             if candidate.accepted:
                 accepted_unique.append(candidate)
         return tuple(results)
+
+    def _refine_seed_families(
+        self,
+        grayscale: NDArray[np.uint8],
+        seeds: tuple[_BoardSeedCandidate, ...],
+    ) -> tuple[
+        tuple[_BoardFamilyCandidate, ...],
+        tuple[BoardEnvelopeRefinementDiagnostic, ...],
+    ]:
+        """Replace each accepted seed with its verified maximal family envelope."""
+
+        families: list[_BoardFamilyCandidate] = []
+        refinements: list[BoardEnvelopeRefinementDiagnostic] = []
+        for seed in seeds:
+            diagnostic = seed.diagnostic
+            if not diagnostic.accepted:
+                continue
+            result = self._envelope_refiner.refine(
+                grayscale,
+                diagnostic,
+                seed.grid_evidence,
+            )
+            refinements.extend(result.diagnostics)
+            selected_refinement = result.selected_diagnostic
+            selected_evidence = result.selected_grid_evidence
+            if selected_refinement is None or selected_evidence is None:
+                x, y, width, height = (
+                    diagnostic.x,
+                    diagnostic.y,
+                    diagnostic.width,
+                    diagnostic.height,
+                )
+                grid_evidence = seed.grid_evidence
+            else:
+                x, y, width, height = (
+                    selected_refinement.refined_x,
+                    selected_refinement.refined_y,
+                    selected_refinement.refined_width,
+                    selected_refinement.refined_height,
+                )
+                grid_evidence = selected_evidence
+            families.append(
+                _BoardFamilyCandidate(
+                    seed=seed,
+                    x=x,
+                    y=y,
+                    width=width,
+                    height=height,
+                    grid_evidence=grid_evidence,
+                    confidence=self._final_confidence(
+                        diagnostic.geometry_score,
+                        grid_evidence.score,
+                    ),
+                    refinement=selected_refinement,
+                )
+            )
+        return self._suppress_family_duplicates(families), tuple(refinements)
+
+    def _suppress_family_duplicates(
+        self,
+        families: list[_BoardFamilyCandidate],
+    ) -> tuple[_BoardFamilyCandidate, ...]:
+        """Collapse refined and contour-derived copies of the same final envelope."""
+
+        ordered = sorted(families, key=self._family_sort_key)
+        unique: list[_BoardFamilyCandidate] = []
+        for family in ordered:
+            if any(
+                self._family_intersection_over_union(family, accepted)
+                >= self._settings.duplicate_iou_threshold
+                for accepted in unique
+            ):
+                continue
+            unique.append(family)
+        return tuple(unique)
 
     def _select_detection(
         self,
         *,
         contour_count: int,
-        candidates: tuple[BoardCandidateDiagnostic, ...],
+        seeds: tuple[_BoardSeedCandidate, ...],
+        families: tuple[_BoardFamilyCandidate, ...],
+        refinements: tuple[BoardEnvelopeRefinementDiagnostic, ...],
     ) -> BoardDetectionAnalysis:
         """Select the deterministic winner or raise an actionable typed error."""
 
-        accepted = tuple(candidate for candidate in candidates if candidate.accepted)
-        top_candidate = accepted[0] if accepted else None
+        candidates = tuple(seed.diagnostic for seed in seeds)
+        top_family = families[0] if families else None
         competitive_count = (
             sum(
-                top_candidate.confidence - candidate.confidence
+                top_family.confidence - family.confidence
                 <= self._settings.ambiguity_score_delta
-                for candidate in accepted
+                for family in families
             )
-            if top_candidate is not None
+            if top_family is not None
             else 0
         )
         diagnostics = BoardDetectionDiagnostics(
             contour_count=contour_count,
             candidates=candidates,
-            selected_candidate=top_candidate,
+            selected_candidate=(
+                top_family.seed.diagnostic if top_family is not None else None
+            ),
             competitive_candidate_count=competitive_count,
+            envelope_refinements=refinements,
+            selected_refinement=(
+                top_family.refinement if top_family is not None else None
+            ),
         )
 
-        if top_candidate is None:
+        if top_family is None:
             reason_counts = Counter(
                 reason
                 for candidate in candidates
@@ -506,23 +635,62 @@ class OpenCvBoardDetector(BoardDetector):
                 f"rejections: {reason_summary or 'none above diagnostic area floor'}.",
                 diagnostics,
             )
-        if top_candidate.confidence < self._settings.minimum_confidence:
+        if top_family.confidence < self._settings.minimum_confidence:
             raise BoardDetectionError(
                 "Best board candidate was below the confidence threshold: "
-                f"{top_candidate.confidence:.3f} < "
+                f"{top_family.confidence:.3f} < "
                 f"{self._settings.minimum_confidence:.3f}. "
                 f"Competitive candidates: {competitive_count}.",
                 diagnostics,
             )
 
         detection = BoardDetection(
-            x=top_candidate.x,
-            y=top_candidate.y,
-            width=top_candidate.width,
-            height=top_candidate.height,
-            confidence=top_candidate.confidence,
+            x=top_family.x,
+            y=top_family.y,
+            width=top_family.width,
+            height=top_family.height,
+            confidence=top_family.confidence,
         )
         return BoardDetectionAnalysis(detection=detection, diagnostics=diagnostics)
+
+    @staticmethod
+    def _family_intersection_over_union(
+        first: _BoardFamilyCandidate,
+        second: _BoardFamilyCandidate,
+    ) -> float:
+        """Measure final family envelopes without exposing a synthetic contour."""
+
+        intersection_left = max(first.x, second.x)
+        intersection_top = max(first.y, second.y)
+        intersection_right = min(first.x + first.width, second.x + second.width)
+        intersection_bottom = min(first.y + first.height, second.y + second.height)
+        intersection_width = max(0, intersection_right - intersection_left)
+        intersection_height = max(0, intersection_bottom - intersection_top)
+        intersection_area = intersection_width * intersection_height
+        union_area = (
+            first.width * first.height
+            + second.width * second.height
+            - intersection_area
+        )
+        return intersection_area / union_area if union_area else 0.0
+
+    @staticmethod
+    def _family_sort_key(
+        family: _BoardFamilyCandidate,
+    ) -> tuple[float, int, int, int, int, int]:
+        """Preserve confidence selection while preferring maximal verified ties."""
+
+        return (
+            -family.confidence,
+            -(
+                family.grid_evidence.estimated_rows
+                * family.grid_evidence.estimated_columns
+            ),
+            -(family.width * family.height),
+            family.y,
+            family.x,
+            -family.width,
+        )
 
     @staticmethod
     def _candidate_sort_key(

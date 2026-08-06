@@ -233,3 +233,202 @@ def live_like_9x9_weak_grid_case(
         weakened_horizontal_line_indices=horizontal_indices,
         weak_signal_present=weak_signal_present,
     )
+
+
+def truncated_outer_grid_envelope_screenshot(
+    *,
+    rows: int,
+    columns: int,
+    clipped_side: str,
+    low_contrast_outer_band: bool = True,
+    continue_orthogonal_separators: bool = True,
+    unrelated_external_panel: bool = False,
+    outer_band_cell_fraction: float = 1.0,
+    screenshot_width: int = 1000,
+    screenshot_height: int = 760,
+    board_x: int = 230,
+    board_y: int = 110,
+    board_width: int = 540,
+    board_height: int = 540,
+) -> tuple[Screenshot, BoardDetection]:
+    """Draw a full grid with a low-contrast band absent from its seed contour."""
+
+    if rows < 3 or columns < 3:
+        raise ValueError(
+            "Synthetic envelope grid requires at least three cells per axis."
+        )
+    if clipped_side not in {"left", "right", "top", "bottom"}:
+        raise ValueError("clipped_side must be left, right, top, or bottom.")
+    if outer_band_cell_fraction <= 0.0:
+        raise ValueError("outer_band_cell_fraction must be positive.")
+    if not (
+        0 <= board_x < board_x + board_width <= screenshot_width
+        and 0 <= board_y < board_y + board_height <= screenshot_height
+    ):
+        raise ValueError("Synthetic board must fit inside the screenshot.")
+
+    horizontal_clip = clipped_side in {"left", "right"}
+    nominal_cell_size = (
+        board_width / columns if horizontal_clip else board_height / rows
+    )
+    outer_band_size = max(1, round(nominal_cell_size * outer_band_cell_fraction))
+    if horizontal_clip and outer_band_size >= board_width:
+        raise ValueError("Outer band must be narrower than the board.")
+    if not horizontal_clip and outer_band_size >= board_height:
+        raise ValueError("Outer band must be shorter than the board.")
+
+    panel_color = (232, 232, 205)
+    seed_color = (178, 207, 238)
+    contrasting_band_color = (105, 178, 242)
+    line_color = (55, 55, 55)
+    image = np.full(
+        (screenshot_height, screenshot_width, 3),
+        panel_color,
+        dtype=np.uint8,
+    )
+    full_right = board_x + board_width
+    full_bottom = board_y + board_height
+    if clipped_side == "right":
+        seed_x, seed_y = board_x, board_y
+        seed_width, seed_height = board_width - outer_band_size, board_height
+        band_rectangle = (
+            seed_x + seed_width,
+            board_y,
+            full_right,
+            full_bottom,
+        )
+    elif clipped_side == "left":
+        seed_x, seed_y = board_x + outer_band_size, board_y
+        seed_width, seed_height = board_width - outer_band_size, board_height
+        band_rectangle = (board_x, board_y, seed_x, full_bottom)
+    elif clipped_side == "bottom":
+        seed_x, seed_y = board_x, board_y
+        seed_width, seed_height = board_width, board_height - outer_band_size
+        band_rectangle = (
+            board_x,
+            seed_y + seed_height,
+            full_right,
+            full_bottom,
+        )
+    else:
+        seed_x, seed_y = board_x, board_y + outer_band_size
+        seed_width, seed_height = board_width, board_height - outer_band_size
+        band_rectangle = (board_x, board_y, full_right, seed_y)
+
+    cv2.rectangle(
+        image,
+        (seed_x, seed_y),
+        (seed_x + seed_width, seed_y + seed_height),
+        seed_color,
+        -1,
+    )
+    cv2.rectangle(
+        image,
+        (seed_x, seed_y),
+        (seed_x + seed_width, seed_y + seed_height),
+        line_color,
+        4,
+    )
+    if not low_contrast_outer_band:
+        cv2.rectangle(
+            image,
+            (band_rectangle[0], band_rectangle[1]),
+            (band_rectangle[2], band_rectangle[3]),
+            contrasting_band_color,
+            -1,
+        )
+        cv2.rectangle(
+            image,
+            (board_x, board_y),
+            (full_right, full_bottom),
+            line_color,
+            4,
+        )
+
+    vertical_boundaries = tuple(
+        board_x + round(board_width * index / columns) for index in range(1, columns)
+    )
+    horizontal_boundaries = tuple(
+        board_y + round(board_height * index / rows) for index in range(1, rows)
+    )
+    for separator_x in vertical_boundaries:
+        if not seed_x < separator_x < seed_x + seed_width:
+            continue
+        cv2.line(
+            image,
+            (separator_x, seed_y),
+            (separator_x, seed_y + seed_height),
+            line_color,
+            3,
+        )
+    for separator_y in horizontal_boundaries:
+        if not seed_y < separator_y < seed_y + seed_height:
+            continue
+        cv2.line(
+            image,
+            (seed_x, separator_y),
+            (seed_x + seed_width, separator_y),
+            line_color,
+            3,
+        )
+
+    if continue_orthogonal_separators:
+        gap = max(6, round(nominal_cell_size * 0.32))
+        if horizontal_clip:
+            for separator_y in horizontal_boundaries:
+                start_x, end_x = (
+                    (board_x, seed_x - gap)
+                    if clipped_side == "left"
+                    else (seed_x + seed_width + gap, full_right)
+                )
+                if start_x < end_x:
+                    cv2.line(
+                        image,
+                        (start_x, separator_y),
+                        (end_x, separator_y),
+                        line_color,
+                        3,
+                    )
+        else:
+            for separator_x in vertical_boundaries:
+                start_y, end_y = (
+                    (board_y, seed_y - gap)
+                    if clipped_side == "top"
+                    else (seed_y + seed_height + gap, full_bottom)
+                )
+                if start_y < end_y:
+                    cv2.line(
+                        image,
+                        (separator_x, start_y),
+                        (separator_x, end_y),
+                        line_color,
+                        3,
+                    )
+
+    if unrelated_external_panel:
+        panel_margin = max(4, round(nominal_cell_size * 0.10))
+        cv2.rectangle(
+            image,
+            (band_rectangle[0] + panel_margin, band_rectangle[1] + panel_margin),
+            (band_rectangle[2] - panel_margin, band_rectangle[3] - panel_margin),
+            (246, 246, 225),
+            2,
+        )
+        cv2.circle(
+            image,
+            (
+                (band_rectangle[0] + band_rectangle[2]) // 2,
+                (band_rectangle[1] + band_rectangle[3]) // 2,
+            ),
+            max(3, round(nominal_cell_size * 0.18)),
+            (170, 170, 150),
+            2,
+        )
+
+    return screenshot_from_image(image), BoardDetection(
+        x=board_x,
+        y=board_y,
+        width=board_width,
+        height=board_height,
+        confidence=0.90,
+    )

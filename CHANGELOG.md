@@ -96,6 +96,9 @@ API reaches stability.
   `STALLED` and validation failures stop before any board click.
 - Extended the one-shot grid diagnostic output with final horizontal/vertical
   boundaries and derived row heights/column widths.
+- Treat contour-derived board rectangles as regular-grid seeds and refine a seed
+  by at most one image-supported outer cell band on each axis. The same shared
+  internal analyzer and mandatory validation re-evaluate every proposed envelope.
 
 ### Fixed
 
@@ -113,6 +116,12 @@ API reaches stability.
   `LEVEL_COMPLETE` and `RANKING` are measured inside the detected vertical game
   viewport, then their rectangles and action points are translated back to full
   screenshot coordinates while `BOARD` remains a full-screenshot analysis.
+- Recover a low-contrast outer row or column that contour extraction omitted by
+  requiring the old seed border to become a real internal separator, continued
+  orthogonal separators across the added band, one-cell sizing, regular spacing,
+  and complete grid evidence. Ambiguous directions fail closed; rectangular grids,
+  weak internal-line recovery, and the Cats geometry guard remain unchanged, with
+  no square, Cats, or color-count assumption in generic vision.
 
 ## [0.1.0] - 2026-08-06
 

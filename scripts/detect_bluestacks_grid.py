@@ -16,7 +16,12 @@ from logicforge.infrastructure.windows import (
     MssWindowCapturer,
     Win32BlueStacksWindowLocator,
 )
-from logicforge.vision.board_detector import BoardDetection, BoardDetectionError
+from logicforge.vision.board_detector import (
+    BoardDetection,
+    BoardDetectionDiagnostics,
+    BoardDetectionError,
+    BoardEnvelopeRefinementDiagnostic,
+)
 from logicforge.vision.grid_detector import GridDetection, GridDetectionError
 from logicforge.vision.screenshot import Screenshot
 from logicforge.vision.window_capture import (
@@ -27,6 +32,12 @@ from logicforge.vision.window_capture import (
 
 DEBUG: Final = True
 DEBUG_OUTPUT_PATH: Final = Path("artifacts/vision/grid_detection.png")
+_REFINEMENT_DIRECTION_ORDER: Final = {
+    "left": 0,
+    "right": 1,
+    "top": 2,
+    "bottom": 3,
+}
 MIN_RECOMMENDED_SCREENSHOT_WIDTH: Final[int] = 440
 MIN_RECOMMENDED_SCREENSHOT_HEIGHT: Final[int] = 470
 
@@ -74,6 +85,7 @@ def print_detection_information(
     grid: GridDetection,
     board_elapsed_seconds: float,
     grid_elapsed_seconds: float,
+    board_diagnostics: BoardDetectionDiagnostics | None = None,
 ) -> None:
     """Print complete operational evidence for one successful manual run."""
 
@@ -84,6 +96,7 @@ def print_detection_information(
         f"x={board.x}, y={board.y}, width={board.width}, height={board.height}"
     )
     print(f"Board confidence: {board.confidence:.3f}")
+    print_envelope_refinement_information(board_diagnostics)
     print(f"Detected rows: {grid.rows}")
     print(f"Detected columns: {grid.columns}")
     print(f"Horizontal boundary count: {len(grid.horizontal_lines)}")
@@ -105,6 +118,89 @@ def print_detection_information(
     print(f"Debug output path: {DEBUG_OUTPUT_PATH.as_posix()}")
 
 
+def print_envelope_refinement_information(
+    diagnostics: BoardDetectionDiagnostics | None,
+) -> None:
+    """Print the selected contour seed and maximal-envelope evidence."""
+
+    refinement = diagnostics.selected_refinement if diagnostics is not None else None
+    if refinement is None:
+        print("Board envelope refined: no")
+    else:
+        print("Board envelope refined: yes")
+        print(
+            "Seed board: "
+            f"x={refinement.seed_x}, y={refinement.seed_y}, "
+            f"width={refinement.seed_width}, height={refinement.seed_height}"
+        )
+        print(f"Refinement direction: {refinement.direction}")
+        print(f"Added pixels: {refinement.added_pixels}")
+        print(f"Seed grid: {refinement.seed_rows}x{refinement.seed_columns}")
+        print(f"Refined grid: {refinement.refined_rows}x{refinement.refined_columns}")
+        print(
+            "Separator continuation score: "
+            f"{refinement.separator_continuation_score:.3f}"
+        )
+        print(
+            "Supported separator fraction: "
+            f"{refinement.supported_separator_fraction:.3f}"
+        )
+        print(f"Refinement score: {refinement.refinement_score:.3f}")
+
+    attempts = diagnostics.envelope_refinements if diagnostics is not None else ()
+    ordered_attempts = sorted(
+        attempts,
+        key=lambda attempt: (
+            attempt.seed_y,
+            attempt.seed_x,
+            attempt.seed_width,
+            attempt.seed_height,
+            _REFINEMENT_DIRECTION_ORDER[attempt.direction],
+        ),
+    )
+    print(f"Envelope refinement attempts: {len(ordered_attempts)}")
+    for attempt in ordered_attempts:
+        _print_refinement_attempt(attempt)
+
+
+def _print_refinement_attempt(
+    attempt: BoardEnvelopeRefinementDiagnostic,
+) -> None:
+    """Print every primitive metric and rejection reason for one direction."""
+
+    print(f"Refinement attempt: {attempt.direction}")
+    print(
+        "Seed rectangle: "
+        f"x={attempt.seed_x}, y={attempt.seed_y}, "
+        f"width={attempt.seed_width}, height={attempt.seed_height}"
+    )
+    print(
+        "Candidate rectangle: "
+        f"x={attempt.refined_x}, y={attempt.refined_y}, "
+        f"width={attempt.refined_width}, height={attempt.refined_height}"
+    )
+    print(f"Added pixels: {attempt.added_pixels}")
+    print(f"Seed grid: {attempt.seed_rows}x{attempt.seed_columns}")
+    print(f"Candidate grid: {attempt.refined_rows}x{attempt.refined_columns}")
+    print(f"Old-border match score: {attempt.old_border_match_score:.3f}")
+    print(
+        "Separator continuation score: " f"{attempt.separator_continuation_score:.3f}"
+    )
+    print(
+        "Supported separator fraction: " f"{attempt.supported_separator_fraction:.3f}"
+    )
+    print(f"Spacing score: {attempt.spacing_score:.3f}")
+    print(f"Refined grid score: {attempt.refined_grid_score:.3f}")
+    print(f"Refinement score: {attempt.refinement_score:.3f}")
+    print(f"Accepted: {'yes' if attempt.accepted else 'no'}")
+    if attempt.rejection_reasons:
+        print("Rejection reasons:")
+        for reason in attempt.rejection_reasons:
+            print(f"- {reason}")
+    else:
+        print("Rejection reasons: none")
+
+
 def main() -> int:
     """Compose capture, board detection, grid extraction, and explicit rendering."""
 
@@ -123,7 +219,8 @@ def main() -> int:
     board_detector = OpenCvBoardDetector(shared_settings)
     board_started_at = perf_counter()
     try:
-        board = board_detector.detect(screenshot)
+        board_analysis = board_detector.analyze(screenshot)
+        board = board_analysis.detection
     except BoardDetectionError as error:
         print(f"Board detection failed: {error}", file=sys.stderr)
         print_small_screenshot_recommendation(screenshot)
@@ -174,6 +271,7 @@ def main() -> int:
         grid,
         board_elapsed_seconds,
         grid_elapsed_seconds,
+        board_analysis.diagnostics,
     )
     return 0
 
