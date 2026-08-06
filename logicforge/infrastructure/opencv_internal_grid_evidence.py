@@ -8,7 +8,7 @@ grid, but it does not expose cells or grid geometry to parsing code.
 from dataclasses import dataclass
 from itertools import pairwise
 from statistics import fmean, pstdev
-from typing import cast
+from typing import Protocol, cast
 
 import cv2
 import numpy as np
@@ -45,6 +45,23 @@ class InternalGridEvidence:
     horizontal_line_coverage: float
     vertical_line_coverage: float
     score: float
+
+
+class InternalGridEvidenceAnalyzer(Protocol):
+    """Type the shared analysis path for board validation and public extraction."""
+
+    def analyze(self, grayscale_roi: NDArray[np.uint8]) -> InternalGridEvidence:
+        """Measure normalized primitive grid evidence from one grayscale ROI."""
+
+        ...
+
+    def rejection_reasons(
+        self,
+        evidence: InternalGridEvidence,
+    ) -> tuple[str, ...]:
+        """Return the shared mandatory validation failures for measured evidence."""
+
+        ...
 
 
 class OpenCvInternalGridEvidenceAnalyzer:
@@ -164,6 +181,51 @@ class OpenCvInternalGridEvidenceAnalyzer:
             vertical_line_coverage=_clamp_unit(vertical_coverage),
             score=score,
         )
+
+    def rejection_reasons(
+        self,
+        evidence: InternalGridEvidence,
+    ) -> tuple[str, ...]:
+        """Apply shared mandatory grid rules for every analyzer consumer."""
+
+        reasons: list[str] = []
+        if (
+            evidence.horizontal_line_count
+            < self._settings.minimum_horizontal_grid_line_count
+        ):
+            reasons.append("insufficient horizontal grid lines")
+        if (
+            evidence.vertical_line_count
+            < self._settings.minimum_vertical_grid_line_count
+        ):
+            reasons.append("insufficient vertical grid lines")
+        if evidence.estimated_rows < self._settings.minimum_estimated_rows:
+            reasons.append("too few estimated rows")
+        if evidence.estimated_columns < self._settings.minimum_estimated_columns:
+            reasons.append("too few estimated columns")
+        if (
+            evidence.horizontal_spacing_coefficient_of_variation
+            > self._settings.maximum_horizontal_spacing_coefficient_of_variation
+        ):
+            reasons.append("irregular horizontal grid spacing")
+        if (
+            evidence.vertical_spacing_coefficient_of_variation
+            > self._settings.maximum_vertical_spacing_coefficient_of_variation
+        ):
+            reasons.append("irregular vertical grid spacing")
+        if (
+            evidence.horizontal_line_coverage
+            < self._settings.minimum_horizontal_line_coverage
+        ):
+            reasons.append("insufficient horizontal grid coverage")
+        if (
+            evidence.vertical_line_coverage
+            < self._settings.minimum_vertical_line_coverage
+        ):
+            reasons.append("insufficient vertical grid coverage")
+        if evidence.score < self._settings.minimum_grid_evidence_score:
+            reasons.append("grid evidence below required threshold")
+        return tuple(reasons)
 
     def _adaptive_block_size(self, width: int, height: int) -> int:
         """Build a valid odd adaptive-threshold neighborhood for the current ROI."""

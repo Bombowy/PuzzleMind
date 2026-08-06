@@ -13,7 +13,7 @@ preceding milestone meets its acceptance criteria.
 ## v0.2 — Screenshot parser
 
 - Define typed parse results, diagnostics, and confidence semantics.
-- Implement screenshot loading and initial detector adapters.
+- Implement screenshot loading plus public board and grid detector adapters.
 - Add anonymized screenshot fixtures and debug overlays.
 - Document supported formats, coordinate systems, and failure modes.
 

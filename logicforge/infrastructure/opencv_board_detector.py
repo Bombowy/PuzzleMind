@@ -283,7 +283,9 @@ class OpenCvBoardDetector(BoardDetector):
         if not rejection_reasons:
             grayscale_roi = grayscale[y : y + height, x : x + width]
             grid_evidence = self._grid_analyzer.analyze(grayscale_roi)
-            rejection_reasons.extend(self._grid_rejection_reasons(grid_evidence))
+            rejection_reasons.extend(
+                self._grid_analyzer.rejection_reasons(grid_evidence)
+            )
         confidence = self._final_confidence(geometry_score, grid_evidence.score)
         return BoardCandidateDiagnostic(
             x=x,
@@ -401,51 +403,6 @@ class OpenCvBoardDetector(BoardDetector):
             + 0.15 * location_score
         )
         return _clamp_unit(geometry_score)
-
-    def _grid_rejection_reasons(
-        self,
-        evidence: InternalGridEvidence,
-    ) -> tuple[str, ...]:
-        """Apply every mandatory grid rule independently with explicit diagnostics."""
-
-        reasons: list[str] = []
-        if (
-            evidence.horizontal_line_count
-            < self._settings.minimum_horizontal_grid_line_count
-        ):
-            reasons.append("insufficient horizontal grid lines")
-        if (
-            evidence.vertical_line_count
-            < self._settings.minimum_vertical_grid_line_count
-        ):
-            reasons.append("insufficient vertical grid lines")
-        if evidence.estimated_rows < self._settings.minimum_estimated_rows:
-            reasons.append("too few estimated rows")
-        if evidence.estimated_columns < self._settings.minimum_estimated_columns:
-            reasons.append("too few estimated columns")
-        if (
-            evidence.horizontal_spacing_coefficient_of_variation
-            > self._settings.maximum_horizontal_spacing_coefficient_of_variation
-        ):
-            reasons.append("irregular horizontal grid spacing")
-        if (
-            evidence.vertical_spacing_coefficient_of_variation
-            > self._settings.maximum_vertical_spacing_coefficient_of_variation
-        ):
-            reasons.append("irregular vertical grid spacing")
-        if (
-            evidence.horizontal_line_coverage
-            < self._settings.minimum_horizontal_line_coverage
-        ):
-            reasons.append("insufficient horizontal grid coverage")
-        if (
-            evidence.vertical_line_coverage
-            < self._settings.minimum_vertical_line_coverage
-        ):
-            reasons.append("insufficient vertical grid coverage")
-        if evidence.score < self._settings.minimum_grid_evidence_score:
-            reasons.append("grid evidence below required threshold")
-        return tuple(reasons)
 
     def _final_confidence(self, geometry_score: float, grid_score: float) -> float:
         """Weight mandatory grid evidence at least as strongly as geometry evidence."""

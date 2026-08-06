@@ -1,5 +1,9 @@
 """Typed application configuration models."""
 
-from logicforge.config.settings import BoardDetectionSettings, LogicForgeSettings
+from logicforge.config.settings import (
+    BoardDetectionSettings,
+    GridExtractionSettings,
+    LogicForgeSettings,
+)
 
-__all__ = ["BoardDetectionSettings", "LogicForgeSettings"]
+__all__ = ["BoardDetectionSettings", "GridExtractionSettings", "LogicForgeSettings"]

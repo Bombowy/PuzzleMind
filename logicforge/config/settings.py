@@ -215,12 +215,31 @@ class BoardDetectionSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class GridExtractionSettings:
+    """Configure only normalized-boundary to pixel-cell conversion constraints."""
+
+    minimum_cell_width_pixels: int = 1
+    minimum_cell_height_pixels: int = 1
+
+    def __post_init__(self) -> None:
+        """Reject extraction constraints that could permit empty cell geometry."""
+
+        if self.minimum_cell_width_pixels < 1:
+            raise ValueError("minimum_cell_width_pixels must be positive.")
+        if self.minimum_cell_height_pixels < 1:
+            raise ValueError("minimum_cell_height_pixels must be positive.")
+
+
+@dataclass(frozen=True, slots=True)
 class VisionSettings:
     """Hold typed puzzle-neutral configuration for vision adapters."""
 
     debug_artifacts_directory: Path = Path("artifacts/vision")
     board_detection: BoardDetectionSettings = field(
         default_factory=BoardDetectionSettings
+    )
+    grid_extraction: GridExtractionSettings = field(
+        default_factory=GridExtractionSettings
     )
 
 

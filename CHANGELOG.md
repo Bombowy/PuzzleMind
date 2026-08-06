@@ -24,6 +24,9 @@ API reaches stability.
 - Synthetic detector and renderer tests that require no live desktop application.
 - Primitive internal-grid diagnostics with normalized separator positions,
   estimated dimensions, spacing regularity, coverage, and evidence score.
+- Public `OpenCvGridDetector`, immutable `GridDetection`/`CellBounds` models, typed
+  diagnostics/errors, and full-screenshot half-open coordinate semantics.
+- Deterministic row-major cell generation and explicit grid debug rendering/script.
 
 ### Changed
 
@@ -32,6 +35,8 @@ API reaches stability.
 - Documented deterministic candidate filtering, scoring, and tie-breaking behavior.
 - Weighted final board confidence as 40% geometry and 60% grid evidence.
 - Extended debug overlays with detected separators and grid diagnostics.
+- Shared one internal grid-analysis and mandatory-validation path between board
+  acceptance and public grid geometry extraction.
 
 ### Fixed
 

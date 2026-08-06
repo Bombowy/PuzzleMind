@@ -144,8 +144,7 @@ advertisement-like, button-sized, and
 geometrically implausible candidates without fixing coordinates to one resolution.
 
 Geometry-valid candidates then receive private ROI-level regular-grid validation.
-This is not the public `GridDetector`: it neither returns cells nor provides grid
-geometry to parsers. CLAHE normalization, adaptive-threshold edges, Canny edges,
+CLAHE normalization, adaptive-threshold edges, Canny edges,
 directional morphological opening, and axis projection profiles identify long
 horizontal and vertical responses. Nearby responses are clustered by a relative
 ROI distance so thick separators count once. Candidate-border responses are
@@ -189,11 +188,30 @@ ties reproducibly. Diagnostics contain only primitive measurements, normalized
 line-position tuples, and rejection reasons; no contours or OpenCV types cross the
 infrastructure boundary.
 
+The public `OpenCvGridDetector` reuses that exact analyzer and mandatory validation
+path; it does not run a second line detector. It validates the supplied
+`BoardDetection`, crops only that board ROI, converts normalized boundaries into
+full-screenshot integers using deterministic round-half-up, and rejects any
+duplicate or reversed pixel result. Outer lines are fixed exactly to the board's
+half-open bounds.
+
+`GridDetection` contains every horizontal and vertical boundary, derived row and
+column counts, row-major immutable `CellBounds`, and the grid-evidence confidence.
+Coordinates are screenshot-relative. A cell includes its top-left pixel and excludes
+`x + width` and `y + height`, so consecutive cells tile the complete board without
+gaps or overlap. Grid confidence intentionally excludes board confidence. Typed
+`GridDetectionError` diagnostics preserve normalized positions, converted lines,
+spacing, coverage, score, and rejection reasons without exposing matrices.
+
 OpenCV debug rendering is a separate infrastructure concern. It copies the
 immutable source pixels and may draw selected/rejected candidates, de-duplicated
 horizontal and vertical lines, estimated dimensions, coverage, and grid score.
 Persistence occurs only through an explicit `debug=True` call, so ordinary
 detection has no filesystem side effects.
+
+The grid renderer separately draws the public board boundary, all public lines,
+cell centers, and optional row/column labels. Its normal and rejected overlays are
+also explicit debug-only persistence paths.
 
 ## Solver module
 

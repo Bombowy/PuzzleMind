@@ -11,9 +11,9 @@ infrastructure adapters.
 
 > [!IMPORTANT]
 > LogicForge currently provides the architecture, in-memory BlueStacks capture,
-> and classical puzzle-board localization with private regular-grid validation. It
-> does not yet expose grid/cell detection, parse puzzles, solve rules, or control
-> input devices.
+> classical puzzle-board localization, and public grid/cell geometry extraction.
+> It does not yet recognize colors or symbols, parse puzzles, solve rules, or
+> control input devices.
 
 ## Architecture
 
@@ -42,7 +42,8 @@ responsibilities, and extension guidance.
 
 - Backend-neutral screenshot and image transport.
 - A replaceable board detector with deterministic diagnostics and confidence.
-- Future grid, symbol, and color detector ports without implementations yet.
+- Public screenshot-space grid boundaries and immutable cell rectangles.
+- Future symbol and color detector ports without implementations yet.
 - Immutable puzzle-neutral board, cell, candidate, and region models.
 - Deterministic rule evaluation with atomic state propagation.
 - Auditable deductions and presentation-neutral explanations.
@@ -127,9 +128,31 @@ must contain regular horizontal and vertical separator evidence: enough distinct
 boundaries for at least a 3x3 grid, consistent spacing, substantial line coverage,
 and a minimum aggregate grid score. Confidence combines 40% geometric evidence
 with 60% grid evidence, while all grid conditions remain mandatory hard checks.
-This internal validation does not implement the public `GridDetector` or expose
-cells. Grid detection, extraction, recognition, parsing, solving, and automation
-remain outside this milestone.
+The same internal analysis path is reused by the public `GridDetector`; separator
+detection is not duplicated.
+
+## Public grid and cell geometry
+
+The public OpenCV grid adapter converts `Screenshot + BoardDetection` into complete
+screenshot-space grid boundaries and immutable row-major `CellBounds` records:
+
+```bash
+uv run python scripts/detect_bluestacks_grid.py
+```
+
+The command saves an explicit debug overlay to
+`artifacts/vision/grid_detection.png`. Horizontal and vertical line tuples include
+the outer board boundaries. Cell rectangles use half-open pixel intervals: `x` and
+`y` are inclusive, while `x + width` and `y + height` are exclusive. Consequently,
+adjacent cells share boundaries without overlapping, and the complete cell set
+covers the board without gaps. Coordinates are relative to the captured screenshot,
+never the desktop or cropped ROI.
+
+Grid confidence is the shared grid-evidence score only; board confidence is not
+blended into it. Invalid boards, unreliable grids, collapsed rounded boundaries,
+or non-positive cells raise `GridDetectionError` without returning partial geometry.
+This milestone does not recognize colors, cats, symbols, or text and does not build
+domain boards or solve puzzles.
 
 ## Development
 
@@ -154,9 +177,10 @@ uv run pytest
 ```
 
 The test suite validates architecture boundaries, immutable image transport,
-window ownership, synthetic board detection, deterministic selection, rejection
-rules, confidence bounds, and opt-in debug persistence. Tests never require a live
-BlueStacks process, desktop focus, monitor geometry, or network access.
+window ownership, synthetic board/grid detection, deterministic cell tiling,
+advertisement rejection, confidence bounds, and opt-in debug persistence. Tests
+never require a live BlueStacks process, desktop focus, monitor geometry, or
+network access.
 
 ## Contributing
 

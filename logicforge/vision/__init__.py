@@ -7,6 +7,13 @@ from logicforge.vision.board_detector import (
     BoardDetectionError,
     BoardDetector,
 )
+from logicforge.vision.grid_detector import (
+    CellBounds,
+    GridDetection,
+    GridDetectionDiagnostics,
+    GridDetectionError,
+    GridDetector,
+)
 from logicforge.vision.parser import PuzzleParser
 from logicforge.vision.screenshot import Screenshot
 from logicforge.vision.window_capture import (
@@ -21,6 +28,11 @@ __all__ = [
     "BoardDetectionDiagnostics",
     "BoardDetectionError",
     "BoardDetector",
+    "CellBounds",
+    "GridDetection",
+    "GridDetectionDiagnostics",
+    "GridDetectionError",
+    "GridDetector",
     "PuzzleParser",
     "Screenshot",
     "WindowBounds",
