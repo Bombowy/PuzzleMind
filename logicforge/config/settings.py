@@ -231,6 +231,45 @@ class GridExtractionSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class ColorDetectionSettings:
+    """Configure robust cell sampling and deterministic LAB color clustering.
+
+    LAB distances use OpenCV's 8-bit representation. The threshold therefore has
+    implementation-calibrated units and does not claim to be a CIE Delta-E value.
+    """
+
+    sample_inner_fraction: float = 0.65
+    outlier_trim_fraction: float = 0.15
+    cluster_distance_threshold: float = 18.0
+    maximum_within_cell_spread: float = 24.0
+    minimum_sample_pixels: int = 25
+    homogeneity_confidence_weight: float = 0.70
+    cluster_fit_confidence_weight: float = 0.30
+
+    def __post_init__(self) -> None:
+        """Reject settings that could create empty samples or invalid confidence."""
+
+        if not 0.0 < self.sample_inner_fraction <= 1.0:
+            raise ValueError("sample_inner_fraction must be within (0.0, 1.0].")
+        if not 0.0 <= self.outlier_trim_fraction < 0.5:
+            raise ValueError("outlier_trim_fraction must be within [0.0, 0.5).")
+        if self.cluster_distance_threshold <= 0.0:
+            raise ValueError("cluster_distance_threshold must be positive.")
+        if self.maximum_within_cell_spread <= 0.0:
+            raise ValueError("maximum_within_cell_spread must be positive.")
+        if self.minimum_sample_pixels < 1:
+            raise ValueError("minimum_sample_pixels must be positive.")
+        weights = (
+            self.homogeneity_confidence_weight,
+            self.cluster_fit_confidence_weight,
+        )
+        if any(weight < 0.0 or weight > 1.0 for weight in weights):
+            raise ValueError("Color confidence weights must be within 0.0 and 1.0.")
+        if not abs(sum(weights) - 1.0) < 1e-9:
+            raise ValueError("Color confidence weights must sum to 1.0.")
+
+
+@dataclass(frozen=True, slots=True)
 class VisionSettings:
     """Hold typed puzzle-neutral configuration for vision adapters."""
 
@@ -240,6 +279,9 @@ class VisionSettings:
     )
     grid_extraction: GridExtractionSettings = field(
         default_factory=GridExtractionSettings
+    )
+    color_detection: ColorDetectionSettings = field(
+        default_factory=ColorDetectionSettings
     )
 
 

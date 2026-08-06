@@ -2,8 +2,14 @@
 
 from logicforge.config.settings import (
     BoardDetectionSettings,
+    ColorDetectionSettings,
     GridExtractionSettings,
     LogicForgeSettings,
 )
 
-__all__ = ["BoardDetectionSettings", "GridExtractionSettings", "LogicForgeSettings"]
+__all__ = [
+    "BoardDetectionSettings",
+    "ColorDetectionSettings",
+    "GridExtractionSettings",
+    "LogicForgeSettings",
+]

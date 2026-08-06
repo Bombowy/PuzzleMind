@@ -7,9 +7,10 @@ presentation, and operating-system side effects. The architecture is designed to
 support many puzzle families without turning the core solver into a collection of
 game-specific conditions.
 
-The codebase currently implements only in-memory BlueStacks capture and rectangular
-board localization. Grid recovery, visual interpretation, puzzle rules, solving,
-and automation remain deliberately deferred to later milestones.
+The codebase currently implements in-memory BlueStacks capture, rectangular board
+localization, public grid/cell geometry, and puzzle-neutral LAB color classes.
+Symbol interpretation, puzzle parsing, rules, solving, and automation remain
+deliberately deferred to later milestones.
 
 ## Architectural principles
 
@@ -212,6 +213,34 @@ detection has no filesystem side effects.
 The grid renderer separately draws the public board boundary, all public lines,
 cell centers, and optional row/column labels. Its normal and rejected overlays are
 also explicit debug-only persistence paths.
+
+`OpenCvColorDetector` consumes only the immutable screenshot and public grid. It
+crops the central configured fraction of every half-open cell, converts BGR pixels
+to OpenCV's 8-bit LAB representation, computes an initial channel median, removes
+the configured farthest-pixel fraction, and takes a final median. This robustly
+estimates the background without assigning semantics to minority symbol strokes.
+
+Cell representatives are grouped with deterministic complete-link agglomeration:
+two clusters merge only when every cross-cluster LAB distance is within the typed
+threshold. This prevents transitive chains from joining endpoints that are not
+actually similar. Final centroids are sorted lexicographically by LAB value and
+receive contiguous logical identifiers `C0..Cn`. The IDs encode equality only and
+do not name colors.
+
+Per-cell confidence is deterministic:
+
+```text
+homogeneity = clamp(1 - robust_spread / maximum_within_cell_spread)
+cluster_fit = clamp(1 - distance_to_centroid / cluster_distance_threshold)
+cell confidence = 0.70 * homogeneity + 0.30 * cluster_fit
+global confidence = arithmetic mean of all cell confidences
+```
+
+Public immutable results contain row-major `ColorObservation` records, the direct
+matrix of logical IDs, class count, global confidence, LAB representatives, and
+primitive diagnostics. OpenCV arrays remain inside infrastructure. A separate
+renderer labels every cell and may persist an overlay only with explicit debug
+behavior. No color stage imports puzzle plugins, solver code, or automation.
 
 ## Solver module
 

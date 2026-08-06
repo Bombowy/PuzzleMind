@@ -11,9 +11,9 @@ infrastructure adapters.
 
 > [!IMPORTANT]
 > LogicForge currently provides the architecture, in-memory BlueStacks capture,
-> classical puzzle-board localization, and public grid/cell geometry extraction.
-> It does not yet recognize colors or symbols, parse puzzles, solve rules, or
-> control input devices.
+> classical puzzle-board localization, public grid/cell geometry extraction, and
+> puzzle-neutral LAB color classification. It does not yet recognize symbols,
+> parse puzzles, solve rules, or control input devices.
 
 ## Architecture
 
@@ -43,7 +43,8 @@ responsibilities, and extension guidance.
 - Backend-neutral screenshot and image transport.
 - A replaceable board detector with deterministic diagnostics and confidence.
 - Public screenshot-space grid boundaries and immutable cell rectangles.
-- Future symbol and color detector ports without implementations yet.
+- Deterministic LAB cell-color classes without hardcoded human color names.
+- A future symbol detector port without an implementation yet.
 - Immutable puzzle-neutral board, cell, candidate, and region models.
 - Deterministic rule evaluation with atomic state propagation.
 - Auditable deductions and presentation-neutral explanations.
@@ -151,8 +152,31 @@ never the desktop or cropped ROI.
 Grid confidence is the shared grid-evidence score only; board confidence is not
 blended into it. Invalid boards, unreliable grids, collapsed rounded boundaries,
 or non-positive cells raise `GridDetectionError` without returning partial geometry.
-This milestone does not recognize colors, cats, symbols, or text and does not build
-domain boards or solve puzzles.
+This grid stage does not recognize cell content and remains independently reusable
+by color and future symbol adapters.
+
+## Puzzle-neutral cell-color detection
+
+`OpenCvColorDetector` consumes the existing in-memory `Screenshot` and public
+`GridDetection`. For every cell it samples the central 65% region, converts the BGR
+pixels to OpenCV LAB, rejects the most distant color outliers, and derives a robust
+representative with a median. It then performs deterministic complete-link
+clustering without assuming a palette or a fixed number of classes. Logical IDs
+such as `C0`, `C1`, and `C2` express only color equality; they are not human color
+names.
+
+Run the complete capture-to-color workflow with:
+
+```bash
+uv run python scripts/detect_bluestacks_colors.py
+```
+
+The command prints the board bounds, grid dimensions, detected class count,
+row-major color matrix, and mean confidence. Explicit debug mode writes
+`artifacts/vision/color_detection.png` with the board, cell outlines, class labels,
+representative-color swatches, and global summary. Normal detector calls do not
+write files. The result is immutable and ready for a future parser/solver, but this
+milestone does not detect cats, X marks, other symbols, or puzzle rules.
 
 ### Troubleshooting small BlueStacks windows
 
@@ -186,8 +210,9 @@ uv run pytest
 
 The test suite validates architecture boundaries, immutable image transport,
 window ownership, synthetic board/grid detection, deterministic cell tiling,
-advertisement rejection, confidence bounds, and opt-in debug persistence. Tests
-never require a live BlueStacks process, desktop focus, monitor geometry, or
+advertisement rejection, deterministic LAB color grouping, confidence bounds, and
+opt-in debug persistence. Tests never require a live BlueStacks process, desktop
+focus, monitor geometry, or
 network access.
 
 ## Contributing

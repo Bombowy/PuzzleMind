@@ -7,6 +7,13 @@ from logicforge.vision.board_detector import (
     BoardDetectionError,
     BoardDetector,
 )
+from logicforge.vision.color_detector import (
+    ColorDetectionDiagnostics,
+    ColorDetectionError,
+    ColorDetectionResult,
+    ColorDetector,
+    ColorObservation,
+)
 from logicforge.vision.grid_detector import (
     CellBounds,
     GridDetection,
@@ -29,6 +36,11 @@ __all__ = [
     "BoardDetectionError",
     "BoardDetector",
     "CellBounds",
+    "ColorDetectionDiagnostics",
+    "ColorDetectionError",
+    "ColorDetectionResult",
+    "ColorDetector",
+    "ColorObservation",
     "GridDetection",
     "GridDetectionDiagnostics",
     "GridDetectionError",

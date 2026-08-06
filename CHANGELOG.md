@@ -29,6 +29,10 @@ API reaches stability.
 - Deterministic row-major cell generation and explicit grid debug rendering/script.
 - Post-failure BlueStacks resizing guidance when a captured screenshot is below
   the operational 440x470 recommendation.
+- Immutable color observations/results, typed diagnostics/errors, and validated
+  puzzle-neutral color-detection settings.
+- Classical OpenCV LAB cell sampling, deterministic complete-link color grouping,
+  full capture-to-color script, and explicit labeled debug overlay.
 
 ### Changed
 

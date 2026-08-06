@@ -14,6 +14,7 @@ preceding milestone meets its acceptance criteria.
 
 - Define typed parse results, diagnostics, and confidence semantics.
 - Implement screenshot loading plus public board and grid detector adapters.
+- Add puzzle-neutral deterministic cell-color classification.
 - Add anonymized screenshot fixtures and debug overlays.
 - Document supported formats, coordinate systems, and failure modes.
 
