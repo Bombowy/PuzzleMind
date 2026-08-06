@@ -19,6 +19,14 @@ from logicforge.plugins.cats.monochromatic_line_color_exclusion_rule import (
 from logicforge.plugins.cats.parser import CatsParser
 from logicforge.plugins.cats.rule_loop import apply_cats_rules_until_stalled
 from logicforge.plugins.cats.rules import CatsRuleCatalog
+from logicforge.plugins.cats.screen_state import (
+    CatsScreenPoint,
+    CatsScreenRect,
+    CatsScreenState,
+    CatsScreenStateDetection,
+    CatsScreenStateDetector,
+    CatsScreenStateDiagnostics,
+)
 from logicforge.plugins.cats.single_remaining_color_cell_rule import (
     SingleRemainingColorCellRule,
 )
@@ -30,6 +38,12 @@ __all__ = [
     "AdjacentColorPairExclusionRule",
     "CatsParser",
     "CatsRuleCatalog",
+    "CatsScreenPoint",
+    "CatsScreenRect",
+    "CatsScreenState",
+    "CatsScreenStateDetection",
+    "CatsScreenStateDetector",
+    "CatsScreenStateDiagnostics",
     "ColorConfinedToLineRule",
     "ColorSubsetConfinedToLinesRule",
     "ImpossibleCatCandidateRule",

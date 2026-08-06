@@ -60,6 +60,13 @@ API reaches stability.
 - Opt-in `--execute-clicks` Cats automation through a lazy `Win32MouseController`:
   every row-major K target receives two left clicks with a default 10 ms delay
   between consecutive clicks, while invocation without the flag remains dry-run.
+- Immutable Cats screen-state contracts and a one-shot OpenCV classifier for
+  `BOARD`, `RANKING`, `LEVEL_COMPLETE`, and `UNKNOWN` in overlay-first priority.
+- OCR-free transition recognition using relative orange-button geometry for level
+  completion, aligned bright-card stacks for ranking, and the existing board/grid
+  detectors for normal gameplay screens.
+- Diagnostic screenshot-space action points and a no-click
+  `detect_bluestacks_cats_screen_state.py` script with an explicit debug overlay.
 
 ### Changed
 
@@ -80,6 +87,11 @@ API reaches stability.
 
 - Rejected advertisement-like rectangles through mandatory regular-grid evidence
   instead of relying on geometry confidence or raising the global threshold.
+- Made Cats transition detection viewport-aware: advertisement panels, black
+  margins, and the BlueStacks toolbar are excluded from overlay geometry;
+  `LEVEL_COMPLETE` and `RANKING` are measured inside the detected vertical game
+  viewport, then their rectangles and action points are translated back to full
+  screenshot coordinates while `BOARD` remains a full-screenshot analysis.
 
 ## [0.1.0] - 2026-08-06
 
