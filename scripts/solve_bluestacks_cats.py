@@ -1,9 +1,12 @@
-"""Capture a visible Cats board and run current deductions without interaction."""
+"""Capture and solve a visible Cats board, with optional explicit click execution."""
 
+import argparse
 import sys
-from collections.abc import Sequence
+import time
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
+from logicforge.automation.mouse import MouseButton, MouseController, ScreenPoint
 from logicforge.config.settings import (
     BoardDetectionSettings,
     ColorDetectionSettings,
@@ -13,8 +16,10 @@ from logicforge.infrastructure.opencv_board_detector import OpenCvBoardDetector
 from logicforge.infrastructure.opencv_color_detector import OpenCvColorDetector
 from logicforge.infrastructure.opencv_grid_detector import OpenCvGridDetector
 from logicforge.infrastructure.windows import (
+    MouseAutomationError,
     MssWindowCapturer,
     Win32BlueStacksWindowLocator,
+    Win32MouseController,
 )
 from logicforge.plugins.cats import apply_cats_rules_until_stalled
 from logicforge.vision.board_detector import BoardDetection, BoardDetectionError
@@ -39,6 +44,10 @@ class CatClickPlanError(RuntimeError):
     """Report inconsistent logical or detected geometry during dry-run mapping."""
 
 
+class CatClickExecutionError(RuntimeError):
+    """Report invalid or failed orchestration of the explicit click plan."""
+
+
 @dataclass(frozen=True, slots=True)
 class CatClickTarget:
     """Describe one future cat click without emitting any pointer input.
@@ -54,6 +63,43 @@ class CatClickTarget:
     screenshot_y: int
     desktop_x: int
     desktop_y: int
+
+
+type SleepFunction = Callable[[float], None]
+
+
+def _non_negative_int(value: str) -> int:
+    """Parse an integer CLI value while rejecting negative click delays."""
+
+    parsed_value = int(value)
+    if parsed_value < 0:
+        raise argparse.ArgumentTypeError(
+            "click delay must be greater than or equal to 0"
+        )
+    return parsed_value
+
+
+def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespace:
+    """Parse opt-in click execution and its deterministic inter-click delay."""
+
+    parser = argparse.ArgumentParser(
+        description="Capture, solve, and optionally execute Cats click targets."
+    )
+    parser.add_argument(
+        "--execute-clicks",
+        action="store_true",
+        help="Execute every planned cat target as a left double-click.",
+    )
+    parser.add_argument(
+        "--click-delay-ms",
+        type=_non_negative_int,
+        default=10,
+        help=(
+            "Delay between consecutive low-level clicks in milliseconds "
+            "(default: 10)."
+        ),
+    )
+    return parser.parse_args(arguments)
 
 
 def format_matrix(values: Sequence[Sequence[str]]) -> str:
@@ -183,6 +229,31 @@ def print_cat_click_plan(targets: tuple[CatClickTarget, ...]) -> None:
         )
 
 
+def execute_cat_click_plan(
+    targets: tuple[CatClickTarget, ...],
+    mouse_controller: MouseController,
+    *,
+    click_delay_seconds: float = 0.01,
+    sleep_function: SleepFunction = time.sleep,
+) -> int:
+    """Double-click every target in order with one delay between all clicks."""
+
+    if click_delay_seconds < 0:
+        raise CatClickExecutionError(
+            "Click delay must be greater than or equal to zero seconds."
+        )
+
+    for target_index, target in enumerate(targets):
+        point = ScreenPoint(x=target.desktop_x, y=target.desktop_y)
+        mouse_controller.click(point, MouseButton.LEFT)
+        sleep_function(click_delay_seconds)
+        mouse_controller.click(point, MouseButton.LEFT)
+        if target_index < len(targets) - 1:
+            sleep_function(click_delay_seconds)
+
+    return len(targets)
+
+
 def print_solve_information(
     window: WindowInfo,
     screenshot: Screenshot,
@@ -219,8 +290,10 @@ def print_solve_information(
     print(f"Status: {classify_result(logical_board)}")
 
 
-def main() -> int:
-    """Run capture, vision, one mutable Board, and Cats rules to a fixed point."""
+def main(arguments: Sequence[str] | None = None) -> int:
+    """Run one solve pipeline and optionally execute its complete click plan."""
+
+    parsed_arguments = parse_arguments(() if arguments is None else arguments)
 
     capture_service = WindowCaptureService(
         locator=Win32BlueStacksWindowLocator(),
@@ -281,8 +354,28 @@ def main() -> int:
         successful_applications,
     )
     print_cat_click_plan(click_plan)
+
+    if not parsed_arguments.execute_clicks:
+        return 0
+    if not click_plan:
+        print("Executed cat double-click targets: 0")
+        return 0
+
+    try:
+        executed_targets = execute_cat_click_plan(
+            click_plan,
+            Win32MouseController(),
+            click_delay_seconds=parsed_arguments.click_delay_ms / 1000.0,
+        )
+    except (CatClickExecutionError, MouseAutomationError) as error:
+        print(f"Cats click execution failed: {error}", file=sys.stderr)
+        return 7
+
+    print(f"Executed cat double-click targets: {executed_targets}")
+    print(f"Low-level left clicks emitted: {executed_targets * 2}")
+    print(f"Click delay: {parsed_arguments.click_delay_ms} ms")
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))

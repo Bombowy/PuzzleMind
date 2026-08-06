@@ -7,7 +7,9 @@ import numpy as np
 import pytest
 from scripts import solve_bluestacks_cats as solve_script
 
+from logicforge.automation.mouse import MouseButton, MouseController, ScreenPoint
 from logicforge.core import Board, BoardStateError
+from logicforge.infrastructure.windows import MouseAutomationError
 from logicforge.vision.board_detector import (
     BoardDetection,
     BoardDetectionDiagnostics,
@@ -168,6 +170,15 @@ def _rectangular_logical_board() -> Board:
     return Board(_color_result((("C0", "C1", "C2"), ("C3", "C4", "C5"))))
 
 
+def _click_targets() -> tuple[solve_script.CatClickTarget, ...]:
+    """Return two immutable targets in deterministic logical row-major order."""
+
+    return (
+        solve_script.CatClickTarget(0, 1, 20, 30, 420, 330),
+        solve_script.CatClickTarget(1, 2, 40, 50, 440, 350),
+    )
+
+
 def _board_error() -> BoardDetectionError:
     """Create a typed synthetic board-localization failure."""
 
@@ -303,6 +314,42 @@ class _ColorDetector:
         if self.error is not None:
             raise self.error
         return self.result
+
+
+class _FakeMouseController(MouseController):
+    """Record portable click calls without touching the real native pointer."""
+
+    def __init__(self, *, fail_on_call: int | None = None) -> None:
+        """Optionally fail on one zero-based attempted click index."""
+
+        self.fail_on_call = fail_on_call
+        self.clicks: list[tuple[ScreenPoint, MouseButton]] = []
+
+    def click(
+        self,
+        point: ScreenPoint,
+        button: MouseButton = MouseButton.LEFT,
+    ) -> None:
+        """Record or fail one click deterministically."""
+
+        click_index = len(self.clicks)
+        self.clicks.append((point, button))
+        if click_index == self.fail_on_call:
+            raise MouseAutomationError("synthetic native click failure")
+
+
+class _FakeSleep:
+    """Record requested delays without pausing the test process."""
+
+    def __init__(self) -> None:
+        """Start with no recorded sleeps."""
+
+        self.calls: list[float] = []
+
+    def __call__(self, seconds: float) -> None:
+        """Retain one requested delay value."""
+
+        self.calls.append(seconds)
 
 
 def _configure_pipeline(
@@ -836,6 +883,254 @@ def test_print_empty_click_plan_outputs_zero(
     assert capsys.readouterr().out.strip() == "Planned cat click targets: 0"
 
 
+def test_execute_one_target_emits_exactly_two_left_clicks() -> None:
+    """Represent one Cats action as exactly one left-button double-click."""
+
+    controller = _FakeMouseController()
+
+    executed = solve_script.execute_cat_click_plan(
+        (_click_targets()[0],),
+        controller,
+        click_delay_seconds=0,
+        sleep_function=_FakeSleep(),
+    )
+
+    assert executed == 1
+    assert len(controller.clicks) == 2
+    assert all(button is MouseButton.LEFT for _, button in controller.clicks)
+
+
+def test_execute_reuses_identical_desktop_point_for_both_clicks() -> None:
+    """Do not recalculate or move the second click away from its target."""
+
+    controller = _FakeMouseController()
+    target = _click_targets()[0]
+
+    solve_script.execute_cat_click_plan(
+        (target,),
+        controller,
+        click_delay_seconds=0,
+        sleep_function=_FakeSleep(),
+    )
+
+    assert controller.clicks == [
+        (ScreenPoint(target.desktop_x, target.desktop_y), MouseButton.LEFT),
+        (ScreenPoint(target.desktop_x, target.desktop_y), MouseButton.LEFT),
+    ]
+
+
+def test_execute_uses_desktop_not_screenshot_coordinates() -> None:
+    """Create ScreenPoint solely from the previously mapped desktop values."""
+
+    controller = _FakeMouseController()
+    target = solve_script.CatClickTarget(0, 0, 1, 2, 901, 902)
+
+    solve_script.execute_cat_click_plan(
+        (target,),
+        controller,
+        click_delay_seconds=0,
+        sleep_function=_FakeSleep(),
+    )
+
+    assert {point for point, _ in controller.clicks} == {ScreenPoint(901, 902)}
+    assert ScreenPoint(1, 2) not in {point for point, _ in controller.clicks}
+
+
+def test_execute_two_targets_emits_four_clicks_in_row_major_plan_order() -> None:
+    """Finish both clicks for one target before advancing to the next target."""
+
+    controller = _FakeMouseController()
+
+    executed = solve_script.execute_cat_click_plan(
+        _click_targets(),
+        controller,
+        click_delay_seconds=0,
+        sleep_function=_FakeSleep(),
+    )
+
+    assert executed == 2
+    assert [point for point, _ in controller.clicks] == [
+        ScreenPoint(420, 330),
+        ScreenPoint(420, 330),
+        ScreenPoint(440, 350),
+        ScreenPoint(440, 350),
+    ]
+
+
+def test_execute_interleaves_clicks_and_delays_without_trailing_sleep() -> None:
+    """Prove the exact click/sleep sequence across consecutive targets."""
+
+    events: list[str] = []
+
+    class RecordingController(MouseController):
+        """Record click order into a timeline shared with the fake sleeper."""
+
+        def click(
+            self,
+            point: ScreenPoint,
+            button: MouseButton = MouseButton.LEFT,
+        ) -> None:
+            del point, button
+            events.append("click")
+
+    def record_sleep(seconds: float) -> None:
+        del seconds
+        events.append("sleep")
+
+    solve_script.execute_cat_click_plan(
+        _click_targets(),
+        RecordingController(),
+        click_delay_seconds=0.01,
+        sleep_function=record_sleep,
+    )
+
+    assert events == [
+        "click",
+        "sleep",
+        "click",
+        "sleep",
+        "click",
+        "sleep",
+        "click",
+    ]
+
+
+def test_execute_default_delay_is_ten_milliseconds() -> None:
+    """Use 0.01 seconds when no execution delay override is supplied."""
+
+    sleeper = _FakeSleep()
+
+    solve_script.execute_cat_click_plan(
+        (_click_targets()[0],),
+        _FakeMouseController(),
+        sleep_function=sleeper,
+    )
+
+    assert sleeper.calls == [0.01]
+
+
+def test_execute_two_targets_sleeps_between_all_consecutive_clicks_only() -> None:
+    """Emit 2N-1 equal pauses and never sleep after the final click."""
+
+    sleeper = _FakeSleep()
+
+    solve_script.execute_cat_click_plan(
+        _click_targets(),
+        _FakeMouseController(),
+        click_delay_seconds=0.025,
+        sleep_function=sleeper,
+    )
+
+    assert sleeper.calls == [0.025, 0.025, 0.025]
+
+
+def test_execute_accepts_zero_delay() -> None:
+    """Allow deterministic immediate consecutive calls when explicitly requested."""
+
+    sleeper = _FakeSleep()
+
+    assert (
+        solve_script.execute_cat_click_plan(
+            (_click_targets()[0],),
+            _FakeMouseController(),
+            click_delay_seconds=0,
+            sleep_function=sleeper,
+        )
+        == 1
+    )
+    assert sleeper.calls == [0]
+
+
+def test_execute_rejects_negative_delay_before_any_click() -> None:
+    """Fail validation before emitting input or sleeping."""
+
+    controller = _FakeMouseController()
+    sleeper = _FakeSleep()
+
+    with pytest.raises(solve_script.CatClickExecutionError, match="greater than"):
+        solve_script.execute_cat_click_plan(
+            _click_targets(),
+            controller,
+            click_delay_seconds=-0.001,
+            sleep_function=sleeper,
+        )
+
+    assert controller.clicks == []
+    assert sleeper.calls == []
+
+
+def test_execute_empty_plan_returns_zero_without_click_or_sleep() -> None:
+    """Treat an empty solved plan as a safe successful no-op."""
+
+    controller = _FakeMouseController()
+    sleeper = _FakeSleep()
+
+    executed = solve_script.execute_cat_click_plan(
+        (),
+        controller,
+        sleep_function=sleeper,
+    )
+
+    assert executed == 0
+    assert controller.clicks == []
+    assert sleeper.calls == []
+
+
+@pytest.mark.parametrize("fail_on_call", [0, 1])
+def test_execute_stops_on_first_or_second_click_failure(fail_on_call: int) -> None:
+    """Propagate native failure without attempting any later target."""
+
+    controller = _FakeMouseController(fail_on_call=fail_on_call)
+
+    with pytest.raises(MouseAutomationError, match="synthetic native"):
+        solve_script.execute_cat_click_plan(
+            _click_targets(),
+            controller,
+            click_delay_seconds=0,
+            sleep_function=_FakeSleep(),
+        )
+
+    assert len(controller.clicks) == fail_on_call + 1
+    assert all(point == ScreenPoint(420, 330) for point, _ in controller.clicks)
+
+
+def test_execute_does_not_mutate_immutable_targets() -> None:
+    """Consume the caller's tuple and values as read-only execution input."""
+
+    targets = _click_targets()
+    expected = targets
+
+    solve_script.execute_cat_click_plan(
+        targets,
+        _FakeMouseController(),
+        click_delay_seconds=0,
+        sleep_function=_FakeSleep(),
+    )
+
+    assert targets == expected
+
+
+def test_execute_does_not_mutate_board_or_grid() -> None:
+    """Keep logical and detected geometry untouched by pointer execution."""
+
+    board = _rectangular_logical_board()
+    board.set_cat(0, 1)
+    grid = _rectangular_grid_detection()
+    board_before = tuple(tuple(row) for row in board.cells)
+    grid_before = grid
+    targets = solve_script.build_cat_click_plan(board, grid, _offset_window())
+
+    solve_script.execute_cat_click_plan(
+        targets,
+        _FakeMouseController(),
+        click_delay_seconds=0,
+        sleep_function=_FakeSleep(),
+    )
+
+    assert tuple(tuple(row) for row in board.cells) == board_before
+    assert grid == grid_before
+
+
 def test_main_creates_one_board_and_calls_rule_loop_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -965,6 +1260,284 @@ def test_main_prints_dry_run_click_plan(
     output = capsys.readouterr().out
     assert "Planned cat click targets: 2" in output
     assert "CLICK: row=0, column=0, screenshot=(20, 30), desktop=(20, 30)" in output
+
+
+def test_cli_defaults_to_dry_run_and_ten_millisecond_delay() -> None:
+    """Keep execution opt-in while retaining the operational delay default."""
+
+    arguments = solve_script.parse_arguments(())
+
+    assert arguments.execute_clicks is False
+    assert arguments.click_delay_ms == 10
+
+
+@pytest.mark.parametrize("delay_ms", [0, 25])
+def test_cli_accepts_non_negative_delay(delay_ms: int) -> None:
+    """Accept zero and arbitrary positive integer millisecond delays."""
+
+    arguments = solve_script.parse_arguments(("--click-delay-ms", str(delay_ms)))
+
+    assert arguments.click_delay_ms == delay_ms
+
+
+def test_cli_rejects_negative_delay() -> None:
+    """Use argparse's standard non-zero parse failure for an unsafe value."""
+
+    with pytest.raises(SystemExit) as error_info:
+        solve_script.parse_arguments(("--click-delay-ms", "-1"))
+
+    assert error_info.value.code == 2
+
+
+def test_dry_run_does_not_construct_or_call_mouse_controller(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Preserve the previous no-input behavior unless execution is explicit."""
+
+    _configure_pipeline(monkeypatch)
+    monkeypatch.setattr(
+        solve_script,
+        "apply_cats_rules_until_stalled",
+        _set_complete_result,
+    )
+
+    def reject_controller_creation() -> _FakeMouseController:
+        raise AssertionError("dry-run must not create a mouse controller")
+
+    monkeypatch.setattr(
+        solve_script,
+        "Win32MouseController",
+        reject_controller_creation,
+    )
+
+    assert solve_script.main(()) == 0
+
+
+def test_execute_clicks_runs_complete_plan_with_one_controller(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Execute every mapped K twice through exactly one adapter instance."""
+
+    _configure_pipeline(monkeypatch)
+    monkeypatch.setattr(
+        solve_script,
+        "apply_cats_rules_until_stalled",
+        _set_complete_result,
+    )
+    controller = _FakeMouseController()
+    controller_creations: list[None] = []
+
+    def create_controller() -> _FakeMouseController:
+        controller_creations.append(None)
+        return controller
+
+    monkeypatch.setattr(solve_script, "Win32MouseController", create_controller)
+
+    assert solve_script.main(("--execute-clicks", "--click-delay-ms", "0")) == 0
+    assert controller_creations == [None]
+    assert [point for point, _ in controller.clicks] == [
+        ScreenPoint(20, 30),
+        ScreenPoint(20, 30),
+        ScreenPoint(40, 50),
+        ScreenPoint(40, 50),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("delay_ms", "expected_seconds"),
+    [(10, 0.01), (0, 0.0), (25, 0.025)],
+)
+def test_main_converts_cli_delay_to_seconds(
+    monkeypatch: pytest.MonkeyPatch,
+    delay_ms: int,
+    expected_seconds: float,
+) -> None:
+    """Convert integer milliseconds exactly once at the execution boundary."""
+
+    _configure_pipeline(monkeypatch)
+    monkeypatch.setattr(
+        solve_script,
+        "apply_cats_rules_until_stalled",
+        _set_complete_result,
+    )
+    received_delays: list[float] = []
+
+    def record_execution(
+        targets: tuple[solve_script.CatClickTarget, ...],
+        mouse_controller: MouseController,
+        *,
+        click_delay_seconds: float = 0.01,
+    ) -> int:
+        del mouse_controller
+        received_delays.append(click_delay_seconds)
+        return len(targets)
+
+    monkeypatch.setattr(solve_script, "Win32MouseController", _FakeMouseController)
+    monkeypatch.setattr(solve_script, "execute_cat_click_plan", record_execution)
+
+    arguments = ["--execute-clicks"]
+    if delay_ms != 10:
+        arguments.extend(("--click-delay-ms", str(delay_ms)))
+
+    assert solve_script.main(arguments) == 0
+    assert received_delays == [expected_seconds]
+
+
+def test_execute_empty_plan_does_not_construct_native_adapter(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Return success and print zero without resolving any native dependency."""
+
+    _configure_pipeline(monkeypatch)
+    monkeypatch.setattr(solve_script, "apply_cats_rules_until_stalled", lambda board: 0)
+
+    def reject_controller_creation() -> _FakeMouseController:
+        raise AssertionError("empty plan must not create a mouse controller")
+
+    monkeypatch.setattr(
+        solve_script,
+        "Win32MouseController",
+        reject_controller_creation,
+    )
+
+    assert solve_script.main(("--execute-clicks",)) == 0
+    assert "Executed cat double-click targets: 0" in capsys.readouterr().out
+
+
+def test_execute_success_prints_target_click_and_delay_counts(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Report targets, low-level clicks, and configured delay after execution."""
+
+    _configure_pipeline(monkeypatch)
+    monkeypatch.setattr(
+        solve_script,
+        "apply_cats_rules_until_stalled",
+        _set_complete_result,
+    )
+    monkeypatch.setattr(solve_script, "Win32MouseController", _FakeMouseController)
+
+    assert solve_script.main(("--execute-clicks", "--click-delay-ms", "0")) == 0
+
+    output = capsys.readouterr().out
+    assert "Executed cat double-click targets: 2" in output
+    assert "Low-level left clicks emitted: 4" in output
+    assert "Click delay: 0 ms" in output
+
+
+def test_execute_success_prints_default_ten_millisecond_delay(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Make the default operational pause explicit in successful diagnostics."""
+
+    _configure_pipeline(monkeypatch)
+    monkeypatch.setattr(
+        solve_script,
+        "apply_cats_rules_until_stalled",
+        _set_complete_result,
+    )
+    monkeypatch.setattr(solve_script, "Win32MouseController", _FakeMouseController)
+
+    def execute_without_real_sleep(
+        targets: tuple[solve_script.CatClickTarget, ...],
+        mouse_controller: MouseController,
+        *,
+        click_delay_seconds: float = 0.01,
+    ) -> int:
+        del mouse_controller
+        assert click_delay_seconds == 0.01
+        return len(targets)
+
+    monkeypatch.setattr(
+        solve_script,
+        "execute_cat_click_plan",
+        execute_without_real_sleep,
+    )
+
+    assert solve_script.main(("--execute-clicks",)) == 0
+    assert "Click delay: 10 ms" in capsys.readouterr().out
+
+
+def test_execute_mode_captures_once_and_solves_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Add input emission without repeating capture, Board, or rule-loop work."""
+
+    _configure_pipeline(monkeypatch)
+    capture_calls: list[WindowInfo] = []
+    solve_calls: list[Board] = []
+    board_creations: list[Board] = []
+
+    def capture_once(
+        service: _CaptureService,
+        window: WindowInfo,
+        *,
+        debug: bool = False,
+    ) -> Screenshot:
+        del service, debug
+        capture_calls.append(window)
+        return _CaptureService.screenshot
+
+    def create_board(result: ColorDetectionResult) -> Board:
+        board = Board(result)
+        board_creations.append(board)
+        return board
+
+    def solve_once(board: Board) -> int:
+        solve_calls.append(board)
+        return _set_complete_result(board)
+
+    monkeypatch.setattr(_CaptureService, "capture_window", capture_once)
+    monkeypatch.setattr(solve_script, "Board", create_board)
+    monkeypatch.setattr(solve_script, "apply_cats_rules_until_stalled", solve_once)
+    monkeypatch.setattr(solve_script, "Win32MouseController", _FakeMouseController)
+
+    assert solve_script.main(("--execute-clicks", "--click-delay-ms", "0")) == 0
+    assert len(capture_calls) == 1
+    assert len(board_creations) == 1
+    assert solve_calls == board_creations
+
+
+@pytest.mark.parametrize(
+    "execution_error",
+    [
+        MouseAutomationError("synthetic native failure"),
+        solve_script.CatClickExecutionError("synthetic execution failure"),
+    ],
+)
+def test_click_execution_errors_return_seven_and_actionable_stderr(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    execution_error: RuntimeError,
+) -> None:
+    """Translate only typed execution failures at the outer script boundary."""
+
+    _configure_pipeline(monkeypatch)
+    monkeypatch.setattr(
+        solve_script,
+        "apply_cats_rules_until_stalled",
+        _set_complete_result,
+    )
+
+    def fail_execution(
+        targets: tuple[solve_script.CatClickTarget, ...],
+        mouse_controller: MouseController,
+        *,
+        click_delay_seconds: float = 0.01,
+    ) -> int:
+        del targets, mouse_controller, click_delay_seconds
+        raise execution_error
+
+    monkeypatch.setattr(solve_script, "Win32MouseController", _FakeMouseController)
+    monkeypatch.setattr(solve_script, "execute_cat_click_plan", fail_execution)
+
+    assert solve_script.main(("--execute-clicks",)) == 7
+    error_output = capsys.readouterr().err
+    assert "Cats click execution failed" in error_output
+    assert str(execution_error) in error_output
 
 
 def test_complete_main_returns_zero(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1217,36 +1790,32 @@ def test_click_plan_error_prints_actionable_stderr(
     assert "synthetic click-plan failure" in error_output
 
 
-def test_script_imports_no_mouse_or_click_adapter() -> None:
-    """Keep this milestone diagnostic-only with no automation dependency."""
-
-    source = getsource(solve_script)
-
-    assert "MouseController" not in source
-    assert "logicforge.automation" not in source
-
-
-def test_script_contains_no_pointer_event_technology() -> None:
-    """Keep source free from all explicitly forbidden mouse emitters."""
+def test_script_uses_no_external_mouse_or_subprocess_technology() -> None:
+    """Keep execution behind the controlled port and Win32 adapter only."""
 
     source = getsource(solve_script)
 
     for forbidden_text in (
         "pyautogui",
         "pynput",
-        "SetCursorPos",
-        "mouse_event",
-        "MouseController",
-        ".click(",
+        "subprocess",
     ):
         assert forbidden_text not in source
 
 
-def test_script_imports_no_mouse_event_modules() -> None:
-    """Keep dry-run coordinate mapping independent from automation packages."""
+def test_script_does_not_emit_win32_events_directly() -> None:
+    """Keep SetCursorPos and mouse_event confined to the infrastructure adapter."""
 
     source = getsource(solve_script)
 
-    assert "logicforge.automation" not in source
-    assert "import pyautogui" not in source
-    assert "import pynput" not in source
+    assert "SetCursorPos" not in source
+    assert "mouse_event" not in source
+
+
+def test_script_contains_no_prompt_countdown_or_target_limit() -> None:
+    """Execute an opted-in full plan immediately without hidden interaction gates."""
+
+    source = getsource(solve_script)
+
+    for forbidden_text in ("input(", "countdown", "max-clicks", "move-only"):
+        assert forbidden_text not in source.casefold()

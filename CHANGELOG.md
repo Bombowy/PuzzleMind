@@ -57,6 +57,9 @@ API reaches stability.
   output, COMPLETE/STALLED diagnostics, and no gameplay automation.
 - Dry-run Cats click-plan mapping from logical K coordinates through exact
   `CellBounds` centers to absolute desktop positions, without emitting clicks.
+- Opt-in `--execute-clicks` Cats automation through a lazy `Win32MouseController`:
+  every row-major K target receives two left clicks with a default 10 ms delay
+  between consecutive clicks, while invocation without the flag remains dry-run.
 
 ### Changed
 
