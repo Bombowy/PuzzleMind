@@ -35,6 +35,8 @@ API reaches stability.
   full capture-to-color script, and explicit labeled debug overlay.
 - Cats-specific atomic `place_cat` propagation across color, row, column, and
   neighbors, plus a non-propagating idempotent `block_cell` action.
+- Stateless `SingleRemainingColorCellRule` using numeric color ordering and at
+  most one atomic `place_cat` action per `apply()` call.
 
 ### Changed
 

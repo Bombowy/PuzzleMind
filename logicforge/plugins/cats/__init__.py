@@ -3,5 +3,14 @@
 from logicforge.plugins.cats.board_actions import block_cell, place_cat
 from logicforge.plugins.cats.parser import CatsParser
 from logicforge.plugins.cats.rules import CatsRuleCatalog
+from logicforge.plugins.cats.single_remaining_color_cell_rule import (
+    SingleRemainingColorCellRule,
+)
 
-__all__ = ["CatsParser", "CatsRuleCatalog", "block_cell", "place_cat"]
+__all__ = [
+    "CatsParser",
+    "CatsRuleCatalog",
+    "SingleRemainingColorCellRule",
+    "block_cell",
+    "place_cat",
+]
