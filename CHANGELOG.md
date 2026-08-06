@@ -14,8 +14,14 @@ API reaches stability.
 ### Added
 
 - Windows-only BlueStacks App Player lookup through pywin32.
-- Rectangle-only MSS capture to `artifacts/vision/bluestacks_capture.png`.
 - Typed capture ports, application service, debugging script, and milestone report.
+- Immutable in-memory BGR `Screenshot` backed by a read-only NumPy array.
+- Optional OpenCV debug export to `artifacts/vision/bluestacks_capture.png`.
+
+### Changed
+
+- Refactored MSS capture to return pixels directly instead of encoding a PNG.
+- Made all disk output conditional on an explicit `debug=True` request.
 
 ## [0.1.0] - 2026-08-06
 

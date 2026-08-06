@@ -1,8 +1,14 @@
 """Application contracts for capturing one explicitly located desktop window."""
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+
+from logicforge.vision.screenshot import Screenshot
+
+DEFAULT_DEBUG_IMAGE_PATH = Path("artifacts/vision/bluestacks_capture.png")
+type DebugImageSaver = Callable[[Screenshot, Path], Path]
 
 
 class WindowCaptureError(RuntimeError):
@@ -54,21 +60,6 @@ class WindowInfo:
     bounds: WindowBounds
 
 
-@dataclass(frozen=True, slots=True)
-class CaptureResult:
-    """Report the persisted screenshot and observable capture measurements.
-
-    The result contains no CV interpretation; it records only window identity,
-    output location, captured pixel dimensions, and elapsed capture/save time.
-    """
-
-    window: WindowInfo
-    output_path: Path
-    resolution_width: int
-    resolution_height: int
-    elapsed_seconds: float
-
-
 class WindowLocator(ABC):
     """Define a replaceable port for resolving one eligible desktop window."""
 
@@ -80,11 +71,11 @@ class WindowLocator(ABC):
 
 
 class WindowCapturer(ABC):
-    """Define a port that persists pixels from one explicit window rectangle."""
+    """Define a port that captures one explicit window rectangle into memory."""
 
     @abstractmethod
-    def capture(self, window: WindowInfo, destination: Path) -> CaptureResult:
-        """Capture only ``window.bounds`` and save the result at ``destination``."""
+    def capture(self, window: WindowInfo) -> Screenshot:
+        """Capture only ``window.bounds`` and return an in-memory BGR snapshot."""
 
         raise NotImplementedError
 
@@ -96,14 +87,39 @@ class WindowCaptureService:
     automation responsibilities are outside this milestone and cannot enter here.
     """
 
-    def __init__(self, locator: WindowLocator, capturer: WindowCapturer) -> None:
-        """Receive window infrastructure through narrow dependency-inverted ports."""
+    def __init__(
+        self,
+        locator: WindowLocator,
+        capturer: WindowCapturer,
+        *,
+        debug_image_saver: DebugImageSaver | None = None,
+        debug_image_path: Path = DEFAULT_DEBUG_IMAGE_PATH,
+    ) -> None:
+        """Receive capture and optional debug persistence through injected ports."""
 
         self._locator = locator
         self._capturer = capturer
+        self._debug_image_saver = debug_image_saver
+        self._debug_image_path = debug_image_path
 
-    def capture(self, destination: Path) -> CaptureResult:
-        """Locate the configured window and persist exactly its current rectangle."""
+    def locate_window(self) -> WindowInfo:
+        """Expose one resolved window for callers that need capture diagnostics."""
 
-        window = self._locator.locate()
-        return self._capturer.capture(window, destination)
+        return self._locator.locate()
+
+    def capture_window(self, window: WindowInfo, *, debug: bool = False) -> Screenshot:
+        """Capture a resolved window and optionally persist a separate debug image."""
+
+        screenshot = self._capturer.capture(window)
+        if debug:
+            if self._debug_image_saver is None:
+                raise WindowCaptureError(
+                    "Debug capture requested without a configured debug image saver."
+                )
+            self._debug_image_saver(screenshot, self._debug_image_path)
+        return screenshot
+
+    def capture(self, *, debug: bool = False) -> Screenshot:
+        """Locate and capture the configured window, returning pixels in memory."""
+
+        return self.capture_window(self.locate_window(), debug=debug)

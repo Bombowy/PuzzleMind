@@ -93,7 +93,7 @@ flowchart TB
 
 The planned end-to-end flow is a sequence of typed transformations:
 
-1. An I/O adapter decodes an external image into a backend-neutral `Screenshot`.
+1. A capture or I/O adapter creates an immutable in-memory BGR `Screenshot`.
 2. A plugin parser coordinates board, grid, color, and later symbol detectors.
 3. The parser returns an immutable `Board` plus future diagnostics; it does not
    make deductions.
@@ -129,10 +129,11 @@ the board, `GridDetector` recovers geometry, and `ColorDetector` produces normal
 observations. `PuzzleParser` is the high-level plugin boundary that interprets
 those observations as domain entities.
 
-Raw image payloads are opaque at the public boundary. This prevents NumPy, OpenCV,
-or Pillow types from leaking throughout the system and allows fixture, local, and
-future remote implementations. Detection confidence and diagnostic artifacts will
-be first-class outputs before parsing algorithms are introduced.
+The public `Screenshot` owns a contiguous, read-only `numpy.ndarray` with an
+explicit `uint8` BGR contract. MSS converts native BGRA frames directly into this
+model; no component reloads an encoded file. OpenCV remains an outer-layer adapter
+used only for explicit debug persistence. Detection confidence and diagnostic
+artifacts will be first-class outputs before parsing algorithms are introduced.
 
 ## Solver module
 

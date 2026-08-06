@@ -1,14 +1,13 @@
-"""MSS adapter that persists pixels from one prevalidated window rectangle."""
+"""MSS adapter that captures one prevalidated window rectangle into memory."""
 
-from pathlib import Path
-from time import perf_counter
+from datetime import UTC, datetime
 
+import numpy as np
 from mss import MSS
 from mss.exception import ScreenShotError
-from mss.tools import to_png
 
+from logicforge.vision.screenshot import Screenshot
 from logicforge.vision.window_capture import (
-    CaptureResult,
     WindowCaptureError,
     WindowCapturer,
     WindowInfo,
@@ -16,33 +15,28 @@ from logicforge.vision.window_capture import (
 
 
 class MssWindowCapturer(WindowCapturer):
-    """Capture only explicit window bounds through MSS and persist them as PNG.
+    """Capture explicit window bounds as an in-memory BGR NumPy array.
 
-    The adapter never reads ``MSS.monitors`` and never calls a full-screen capture
-    helper. Its sole capture input is the bounding box supplied by ``WindowInfo``.
+    MSS exposes BGRA pixels. The alpha channel is discarded without color-channel
+    reordering, leaving the BGR layout expected by OpenCV and future detectors.
+    This adapter performs no encoding, file creation, or disk I/O.
     """
 
-    def capture(self, window: WindowInfo, destination: Path) -> CaptureResult:
-        """Capture the selected rectangle, create its directory, and save a PNG."""
-
-        output_path = destination.resolve()
-        started_at = perf_counter()
+    def capture(self, window: WindowInfo) -> Screenshot:
+        """Capture the selected rectangle and return an immutable BGR screenshot."""
 
         try:
-            output_path.parent.mkdir(parents=True, exist_ok=True)
             with MSS() as screenshot_session:
-                screenshot = screenshot_session.grab(window.bounds.as_bbox())
-                to_png(screenshot.rgb, screenshot.size, output=str(output_path))
-        except (OSError, ScreenShotError) as error:
-            raise WindowCaptureError(
-                f'Could not capture "{window.title}" to "{output_path}".'
-            ) from error
+                captured_frame = screenshot_session.grab(window.bounds.as_bbox())
+        except ScreenShotError as error:
+            raise WindowCaptureError(f'Could not capture "{window.title}".') from error
 
-        elapsed_seconds = perf_counter() - started_at
-        return CaptureResult(
-            window=window,
-            output_path=output_path,
-            resolution_width=screenshot.width,
-            resolution_height=screenshot.height,
-            elapsed_seconds=elapsed_seconds,
+        captured_at = datetime.now(UTC)
+        bgra_image = np.asarray(captured_frame, dtype=np.uint8)
+        bgr_image = bgra_image[:, :, :3]
+        return Screenshot(
+            image=bgr_image,
+            width=captured_frame.width,
+            height=captured_frame.height,
+            timestamp=captured_at,
         )

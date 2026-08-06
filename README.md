@@ -91,16 +91,18 @@ The committed lockfile gives local development and CI the same dependency graph.
 
 ## BlueStacks window capture
 
-The first Windows capture milestone can save the visible BlueStacks App Player
-window for debugging:
+The Windows capture pipeline returns the visible BlueStacks App Player window as an
+immutable in-memory `numpy.ndarray` in BGR channel order:
 
 ```bash
 uv run python scripts/capture_bluestacks.py
 ```
 
-BlueStacks must already be open, visible, and not minimized. The command captures
-only that window rectangle and writes `artifacts/vision/bluestacks_capture.png`.
-It does not perform board detection, image analysis, parsing, or solving.
+BlueStacks must already be open, visible, and not minimized. The example script
+enables `debug=True`, so it additionally writes
+`artifacts/vision/bluestacks_capture.png` through OpenCV. Normal service calls use
+`debug=False` and perform no filesystem writes. The PNG is never reloaded into the
+pipeline. This milestone performs no board detection, parsing, or solving.
 
 ## Development
 
