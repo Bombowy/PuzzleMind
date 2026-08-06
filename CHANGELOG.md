@@ -41,6 +41,8 @@ API reaches stability.
   exactly one unresolved cell and every other cell in that line is blocked.
 - Stateless `ColorConfinedToLineRule` with atomic row/column exclusion planning,
   numeric color ordering, and `block_cell`-only mutations.
+- Stateless `ColorSubsetConfinedToLinesRule` reserving N rows or columns for N
+  unresolved colors and atomically blocking other colors in those lines.
 - Stateless `MonochromaticLineColorExclusionRule` for excluding a line's sole
   remaining color everywhere outside that row or column.
 - Stateless `AdjacentColorPairExclusionRule` for atomic perpendicular exclusions

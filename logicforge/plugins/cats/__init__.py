@@ -7,6 +7,9 @@ from logicforge.plugins.cats.board_actions import block_cell, place_cat
 from logicforge.plugins.cats.color_confined_to_line_rule import (
     ColorConfinedToLineRule,
 )
+from logicforge.plugins.cats.color_subset_confined_to_lines_rule import (
+    ColorSubsetConfinedToLinesRule,
+)
 from logicforge.plugins.cats.monochromatic_line_color_exclusion_rule import (
     MonochromaticLineColorExclusionRule,
 )
@@ -25,6 +28,7 @@ __all__ = [
     "CatsParser",
     "CatsRuleCatalog",
     "ColorConfinedToLineRule",
+    "ColorSubsetConfinedToLinesRule",
     "MonochromaticLineColorExclusionRule",
     "SingleRemainingColorCellRule",
     "SingleRemainingLineCellRule",

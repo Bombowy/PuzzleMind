@@ -119,13 +119,14 @@ def _simple_board() -> Board:
     return _board_from_values((("C0", "C1"), ("C2", "C3")))
 
 
-def test_default_rule_order_contains_all_five_cats_rules() -> None:
+def test_default_rule_order_contains_all_six_cats_rules() -> None:
     """Keep the explicit Cats priority independent from import or registry order."""
 
     assert tuple(type(rule).__name__ for rule in DEFAULT_CATS_RULES) == (
         "SingleRemainingColorCellRule",
         "SingleRemainingLineCellRule",
         "MonochromaticLineColorExclusionRule",
+        "ColorSubsetConfinedToLinesRule",
         "AdjacentColorPairExclusionRule",
         "ColorConfinedToLineRule",
     )
@@ -139,6 +140,17 @@ def test_single_remaining_line_precedes_monochromatic_exclusion() -> None:
     assert rule_names.index("SingleRemainingLineCellRule") < rule_names.index(
         "MonochromaticLineColorExclusionRule"
     )
+
+
+def test_color_subset_rule_has_required_priority() -> None:
+    """Place the general subset deduction between line and local pair logic."""
+
+    rule_names = tuple(type(rule).__name__ for rule in DEFAULT_CATS_RULES)
+    subset_index = rule_names.index("ColorSubsetConfinedToLinesRule")
+
+    assert rule_names.index("MonochromaticLineColorExclusionRule") < subset_index
+    assert subset_index < rule_names.index("AdjacentColorPairExclusionRule")
+    assert subset_index < rule_names.index("ColorConfinedToLineRule")
 
 
 def test_all_false_rules_return_zero() -> None:
@@ -375,3 +387,23 @@ def test_real_rules_place_single_remaining_line_cell_before_weaker_rules() -> No
         "X",
     )
     assert tuple(board.get(row, 2) for row in range(1, 4)) == ("X", "X", "X")
+
+
+def test_real_rules_restart_singleton_after_color_subset_exclusion() -> None:
+    """Let the C0/C1 column subset create a C4 singleton after loop restart."""
+
+    board = _board_from_values(
+        (
+            ("C0", "C0", "C2", "C3"),
+            ("C0", "C4", "C2", "C3"),
+            ("C1", "C1", "C4", "C5"),
+            ("C1", "C5", "C6", "C6"),
+        )
+    )
+
+    successful_applications = apply_cats_rules_until_stalled(board)
+
+    assert successful_applications >= 2
+    assert board.get(1, 1) == "X"
+    assert board.get(3, 1) == "X"
+    assert board.get(2, 2) == "K"
