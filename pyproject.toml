@@ -57,7 +57,7 @@ target-version = ["py313"]
 [tool.ruff]
 line-length = 88
 target-version = "py313"
-src = ["logicforge", "tests"]
+src = ["logicforge", "scripts", "tests"]
 
 [tool.ruff.lint]
 select = ["B", "E", "F", "I", "RUF", "UP"]
@@ -68,7 +68,7 @@ known-first-party = ["logicforge"]
 [tool.mypy]
 python_version = "3.13"
 strict = true
-files = ["logicforge", "tests"]
+files = ["logicforge", "scripts", "tests"]
 warn_unreachable = true
 pretty = true
 show_error_codes = true
