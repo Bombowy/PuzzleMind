@@ -37,6 +37,8 @@ API reaches stability.
   neighbors, plus a non-propagating idempotent `block_cell` action.
 - Stateless `SingleRemainingColorCellRule` using numeric color ordering and at
   most one atomic `place_cat` action per `apply()` call.
+- Stateless `ColorConfinedToLineRule` with atomic row/column exclusion planning,
+  numeric color ordering, and `block_cell`-only mutations.
 
 ### Changed
 
