@@ -56,8 +56,10 @@ class CatsScreenStateDetectionSettings:
     viewport_minimum_internal_activity: float = 0.12
     viewport_minimum_score: float = 0.54
 
-    level_orange_hue_minimum: int = 5
+    # Warm CTA button: red/orange low-hue range plus HSV red wrap near 179.
+    level_orange_hue_minimum: int = 0
     level_orange_hue_maximum: int = 28
+    level_red_wrap_hue_minimum: int = 170
     level_orange_saturation_minimum: int = 145
     level_orange_value_minimum: int = 120
     level_region_start_y_ratio: float = 0.60
@@ -118,7 +120,16 @@ class CatsScreenStateDetectionSettings:
             0 <= self.level_orange_hue_minimum < self.level_orange_hue_maximum <= 179
         ):
             raise ValueError(
-                "Orange hue thresholds must satisfy 0 <= min < max <= 179."
+                "Warm CTA low-hue thresholds must satisfy 0 <= min < max <= 179."
+            )
+        if not (
+            self.level_orange_hue_maximum
+            < self.level_red_wrap_hue_minimum
+            <= 179
+        ):
+            raise ValueError(
+                "level_red_wrap_hue_minimum must be above the low-hue CTA range "
+                "and within 0..179."
             )
         if not 0 <= self.ranking_warm_hue_maximum <= 179:
             raise ValueError("ranking_warm_hue_maximum must be within 0 and 179.")
@@ -850,10 +861,10 @@ class OpenCvCatsScreenStateDetector(CatsScreenStateDetector):
         self,
         viewport: _ViewportContext,
     ) -> _LevelButtonCandidate | None:
-        """Find the best lower orange component relative to the game viewport."""
+        """Find the best lower red/orange CTA relative to the game viewport."""
 
         hsv = cast(NDArray[np.uint8], cv2.cvtColor(viewport.image, cv2.COLOR_BGR2HSV))
-        mask = cast(
+        low_hue_mask = cast(
             NDArray[np.uint8],
             cv2.inRange(
                 hsv,
@@ -865,6 +876,19 @@ class OpenCvCatsScreenStateDetector(CatsScreenStateDetector):
                 (self._settings.level_orange_hue_maximum, 255, 255),
             ),
         )
+        red_wrap_mask = cast(
+            NDArray[np.uint8],
+            cv2.inRange(
+                hsv,
+                (
+                    self._settings.level_red_wrap_hue_minimum,
+                    self._settings.level_orange_saturation_minimum,
+                    self._settings.level_orange_value_minimum,
+                ),
+                (179, 255, 255),
+            ),
+        )
+        mask = cast(NDArray[np.uint8], cv2.bitwise_or(low_hue_mask, red_wrap_mask))
         region_start = round(
             viewport.rect.height * self._settings.level_region_start_y_ratio
         )
@@ -992,7 +1016,7 @@ class OpenCvCatsScreenStateDetector(CatsScreenStateDetector):
         ):
             reasons.append("level button area was outside viewport-relative range")
         if orange_fill < self._settings.level_button_minimum_orange_fill_ratio:
-            reasons.append("level button orange fill was below threshold")
+            reasons.append("level button warm CTA fill was below threshold")
         if rectangularity < self._settings.level_button_minimum_rectangularity:
             reasons.append("level button rectangularity was below threshold")
         if score < self._settings.level_button_acceptance_score:
@@ -1519,3 +1543,4 @@ class OpenCvCatsScreenStateDetector(CatsScreenStateDetector):
         right = max(rect.x + rect.width for rect in rectangles)
         bottom = max(rect.y + rect.height for rect in rectangles)
         return CatsScreenRect(x=left, y=top, width=right - left, height=bottom - top)
+
