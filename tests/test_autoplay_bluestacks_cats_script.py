@@ -1,5 +1,6 @@
 """Deterministic tests for the complete Cats autoplay state machine."""
 
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
 from inspect import getsource
@@ -61,6 +62,8 @@ COLUMN_COLOR_MATRIX = tuple(
     tuple(f"C{column}" for column in range(4)) for _ in range(4)
 )
 ROW_COLOR_MATRIX = tuple(tuple(f"C{row}" for _ in range(4)) for row in range(4))
+
+type BoardAnalysisOutcome = solve_script.CatsBoardInput | RuntimeError
 
 
 def _screenshot(index: int = 0) -> Screenshot:
@@ -237,6 +240,64 @@ def _geometry_board_input(
         detected_board=BoardDetection(5, 5, 70, 90, 0.9),
         grid=grid,
         color_result=color_result,
+    )
+
+
+def _board_detection_error() -> BoardDetectionError:
+    return BoardDetectionError(
+        "synthetic animated board",
+        BoardDetectionDiagnostics(0, (), None, 0),
+    )
+
+
+def _grid_detection_error() -> GridDetectionError:
+    return GridDetectionError(
+        "synthetic animated grid",
+        GridDetectionDiagnostics(
+            0,
+            0,
+            1,
+            1,
+            (),
+            (),
+            (),
+            (),
+            0,
+            0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            (),
+        ),
+    )
+
+
+def _color_detection_error() -> ColorDetectionError:
+    return ColorDetectionError(
+        "synthetic animated colors",
+        ColorDetectionDiagnostics(
+            1,
+            1,
+            0.5,
+            18.0,
+            (),
+            (),
+            (),
+            None,
+            ("synthetic animation",),
+        ),
+    )
+
+
+def _existing_cat_detection_error() -> CatsExistingCatDetectionError:
+    return CatsExistingCatDetectionError(
+        "synthetic animated cat",
+        CatsExistingCatDiagnostics(
+            cells=(),
+            rejection_reasons=("synthetic animation",),
+        ),
     )
 
 
@@ -429,15 +490,19 @@ class FakeFailureRenderer:
 class FakeAnalyzer:
     """Return configured immutable board inputs in call order."""
 
-    def __init__(self, inputs: tuple[solve_script.CatsBoardInput, ...]) -> None:
+    def __init__(self, inputs: tuple[BoardAnalysisOutcome, ...]) -> None:
         self.inputs = inputs
         self.calls = 0
+        self.screenshots: list[Screenshot] = []
 
     def __call__(self, screenshot: Screenshot) -> solve_script.CatsBoardInput:
-        del screenshot
+        self.screenshots.append(screenshot)
         index = min(self.calls, len(self.inputs) - 1)
         self.calls += 1
-        return self.inputs[index]
+        outcome = self.inputs[index]
+        if isinstance(outcome, RuntimeError):
+            raise outcome
+        return outcome
 
 
 class FakeSolver:
@@ -463,6 +528,7 @@ def _settings(
     max_levels: int = 1,
     poll_interval: float = 0.1,
     timeout: float = 2.0,
+    board_retry: float = 3.0,
     overlay_retry: float = 0.75,
     max_overlay_retries: int = 3,
     new_board_delay: float = 0.0,
@@ -475,6 +541,7 @@ def _settings(
         click_delay_seconds=click_delay,
         poll_interval_seconds=poll_interval,
         transition_timeout_seconds=timeout,
+        board_analysis_retry_seconds=board_retry,
         overlay_retry_seconds=overlay_retry,
         max_overlay_retries=max_overlay_retries,
         new_board_delay_seconds=new_board_delay,
@@ -486,7 +553,7 @@ def _runner(
     detections: tuple[CatsScreenStateDetection, ...],
     *,
     settings: autoplay.CatsAutoplaySettings | None = None,
-    board_inputs: tuple[solve_script.CatsBoardInput, ...] = (_board_input(),),
+    board_inputs: tuple[BoardAnalysisOutcome, ...] = (_board_input(),),
     statuses: tuple[str, ...] = ("COMPLETE",),
     locator: FakeWindowLocator | None = None,
     mouse: FakeMouseController | None = None,
@@ -533,6 +600,17 @@ def _runner(
         renderer,
         analyzer,
         solver,
+    )
+
+
+def _board_analysis_failure_state(
+    runner: autoplay.CatsAutoplayRunner,
+) -> tuple[float | None, RuntimeError | None]:
+    """Read retry state without retaining MyPy narrowing across runner calls."""
+
+    return (
+        runner._board_analysis_failure_started_at,
+        runner._last_board_analysis_error,
     )
 
 
@@ -770,6 +848,147 @@ def test_autoplay_uses_shared_tile_grid_analysis_without_copying_cv_pipeline() -
     assert "opencvcatstilegriddetector" not in source
     assert "opencvboarddetector" not in source
     assert "opencvgriddetector" not in source
+    assert "solve_cats_exact" not in source
+    assert "logicforge.plugins.cats.exact_search" not in source
+
+
+@pytest.mark.parametrize(
+    ("error_factory", "failure_count"),
+    (
+        (_color_detection_error, 1),
+        (_board_detection_error, 2),
+        (_grid_detection_error, 2),
+        (_existing_cat_detection_error, 2),
+    ),
+    ids=("color", "board", "grid", "existing-cat"),
+)
+def test_transient_board_vision_errors_retry_new_frames_then_solve_once(
+    error_factory: Callable[[], RuntimeError],
+    failure_count: int,
+) -> None:
+    """Retry rejected animation frames and click only the stabilized analysis."""
+
+    error = error_factory()
+    valid_input = _board_input()
+    outcomes: tuple[BoardAnalysisOutcome, ...] = (
+        *((error,) * failure_count),
+        valid_input,
+    )
+    runner, _, capturer, detector, mouse, _, _, analyzer, solver = _runner(
+        (_detection(CatsScreenState.BOARD),),
+        settings=_settings(timeout=20.0),
+        board_inputs=outcomes,
+    )
+
+    summary = runner.run()
+
+    expected_polls = failure_count + 1
+    assert summary.solved_levels == 1
+    assert len(capturer.calls) == expected_polls
+    assert detector.calls == expected_polls
+    assert analyzer.calls == expected_polls
+    assert len({screenshot.timestamp for screenshot in analyzer.screenshots}) == (
+        expected_polls
+    )
+    assert len(solver.calls) == 1
+    assert solver.calls[0][1] is valid_input
+    assert len(mouse.clicks) == 8
+    assert runner._board_analysis_failure_started_at is None
+    assert runner._last_board_analysis_error is None
+
+
+def test_transient_failure_window_raises_current_error_at_deadline_without_clicks(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Measure from the first failure and stop at the deterministic retry bound."""
+
+    error = _color_detection_error()
+    runner, _, capturer, detector, mouse, clock, _, analyzer, solver = _runner(
+        (_detection(CatsScreenState.BOARD),),
+        settings=_settings(
+            max_levels=0,
+            timeout=20.0,
+            poll_interval=0.5,
+            board_retry=3.0,
+        ),
+        board_inputs=(error,),
+    )
+
+    with pytest.raises(ColorDetectionError) as error_info:
+        runner.run()
+
+    assert error_info.value is error
+    assert clock.now == pytest.approx(3.0)
+    assert len(capturer.calls) == 7
+    assert detector.calls == 7
+    assert analyzer.calls == 7
+    assert solver.calls == []
+    assert mouse.clicks == []
+    assert runner._board_analysis_failure_started_at == 0.0
+    output = capsys.readouterr().out
+    assert output.count("transient ColorDetectionError; retrying") == 3
+    assert output.count("analysis did not stabilize within 3.0s") == 1
+
+
+def test_board_unknown_board_state_change_resets_transient_failure_window() -> None:
+    """Start a fresh retry window after BOARD leaves and later returns."""
+
+    error = _board_detection_error()
+    runner, _, _, _, _, clock, _, _, _ = _runner(
+        (
+            _detection(CatsScreenState.BOARD),
+            _detection(CatsScreenState.UNKNOWN),
+            _detection(CatsScreenState.BOARD),
+        ),
+        settings=_settings(max_levels=0, timeout=20.0),
+        board_inputs=(error,),
+    )
+
+    assert runner._run_execute_poll() is False
+    assert runner._board_analysis_failure_started_at == 0.0
+    assert runner._run_execute_poll() is False
+    assert _board_analysis_failure_state(runner) == (None, None)
+    assert runner._run_execute_poll() is False
+    assert runner._board_analysis_failure_started_at == pytest.approx(0.2)
+    assert clock.now == pytest.approx(0.3)
+
+
+def test_transient_board_failure_does_not_update_global_progress_timestamp() -> None:
+    """Leave the independent 20-second progress fuse untouched by bad frames."""
+
+    runner, _, _, _, _, clock, _, _, _ = _runner(
+        (_detection(CatsScreenState.BOARD),),
+        settings=_settings(max_levels=0, timeout=20.0),
+        board_inputs=(_grid_detection_error(),),
+    )
+    clock.advance(5.0)
+    runner._last_progress_at = 1.25
+
+    assert runner._run_execute_poll() is False
+
+    assert runner._last_progress_at == 1.25
+
+
+def test_dry_run_transient_vision_error_remains_fail_fast() -> None:
+    """Keep the existing one-capture dry-run policy outside execute retries."""
+
+    error = _color_detection_error()
+    runner, _, capturer, detector, mouse, clock, _, analyzer, solver = _runner(
+        (_detection(CatsScreenState.BOARD),),
+        settings=_settings(execute=False),
+        board_inputs=(error,),
+    )
+
+    with pytest.raises(ColorDetectionError) as error_info:
+        runner.run()
+
+    assert error_info.value is error
+    assert len(capturer.calls) == 1
+    assert detector.calls == 1
+    assert analyzer.calls == 1
+    assert solver.calls == []
+    assert mouse.clicks == []
+    assert clock.sleeps == []
 
 
 def test_transient_9x8_geometry_never_solves_clicks_or_updates_state(
@@ -795,7 +1014,9 @@ def test_transient_9x8_geometry_never_solves_clicks_or_updates_state(
     assert runner.summary().solved_levels == 0
     assert runner._last_solved_color_matrix is None
     assert runner._phase is autoplay.CatsAutomationPhase.READY_FOR_BOARD
-    assert "rejected transient geometry: grid=9x8, colors=9" in output
+    assert analyzer.calls == 4
+    assert runner._board_analysis_failure_started_at == 0.0
+    assert "transient CatsBoardGeometryMismatchError; retrying" in output
     assert "new level accepted" not in output
     assert len(renderer.calls) == 1
 
@@ -823,6 +1044,8 @@ def test_transient_9x8_then_9x9_solves_only_the_valid_frame(
     assert len(solver.calls) == 1
     assert solver.calls[0][1] is valid_input
     assert len(mouse.clicks) == 18
+    assert runner._board_analysis_failure_started_at is None
+    assert runner._last_board_analysis_error is None
     assert capsys.readouterr().out.count("new level accepted") == 1
 
 
@@ -908,15 +1131,18 @@ def test_complete_validation_happens_before_first_cat_click(
     assert events[1] == "click"
 
 
-def test_stalled_board_raises_before_any_click_and_saves_one_overlay() -> None:
-    """Stop a partial fixed point without emitting a pointer action."""
+@pytest.mark.parametrize("status", ("STALLED", "UNSAT", "AMBIGUOUS", "SEARCH_LIMIT"))
+def test_unresolved_solver_status_raises_before_any_click_and_saves_one_overlay(
+    status: str,
+) -> None:
+    """Stop every unresolved proof status without emitting a pointer action."""
 
     runner, _, _, _, mouse, _, renderer, _, _ = _runner(
         (_detection(CatsScreenState.BOARD),),
-        statuses=("STALLED",),
+        statuses=(status,),
     )
 
-    with pytest.raises(autoplay.CatsSolutionValidationError, match="STALLED"):
+    with pytest.raises(autoplay.CatsSolutionValidationError, match=status):
         runner.run()
     runner.save_failure_overlay()
     runner.save_failure_overlay()
@@ -1128,7 +1354,7 @@ def test_existing_cat_detection_contradiction_emits_zero_clicks() -> None:
         raise CatsExistingCatDetectionError("synthetic contradiction", diagnostics)
 
     runner = autoplay.CatsAutoplayRunner(
-        settings=_settings(),
+        settings=_settings(timeout=20.0, board_retry=0.3),
         locator=locator,
         capturer=capturer,
         detector=detector,
@@ -1142,6 +1368,7 @@ def test_existing_cat_detection_contradiction_emits_zero_clicks() -> None:
     with pytest.raises(CatsExistingCatDetectionError):
         runner.run()
     assert mouse.clicks == []
+    assert len(capturer.calls) == 4
 
 
 def test_validation_rejects_inconsistent_rows_columns_and_color_count() -> None:
@@ -1545,10 +1772,31 @@ def test_cli_defaults_and_validation() -> None:
     assert arguments.click_delay_ms == 10
     assert arguments.poll_interval_ms == 100
     assert arguments.transition_timeout_seconds == 20.0
+    assert arguments.board_analysis_retry_seconds == 3.0
     assert arguments.overlay_retry_ms == 750
     assert arguments.max_overlay_retries == 3
     assert arguments.new_board_delay_ms == 300
     assert arguments.max_levels == 0
+    settings = autoplay.settings_from_arguments(arguments)
+    assert settings.board_analysis_retry_seconds == 3.0
+
+
+@pytest.mark.parametrize("value", (0.0, -1.0, float("nan"), float("inf")))
+def test_board_analysis_retry_setting_requires_finite_positive_value(
+    value: float,
+) -> None:
+    with pytest.raises(ValueError, match="board_analysis_retry_seconds"):
+        _settings(board_retry=value)
+
+
+def test_cli_copies_board_analysis_retry_seconds_into_settings() -> None:
+    arguments = autoplay.parse_arguments(
+        ("--board-analysis-retry-seconds", "1.75"),
+    )
+
+    settings = autoplay.settings_from_arguments(arguments)
+
+    assert settings.board_analysis_retry_seconds == 1.75
 
 
 @pytest.mark.parametrize(
@@ -1557,6 +1805,7 @@ def test_cli_defaults_and_validation() -> None:
         ("--click-delay-ms", "-1"),
         ("--poll-interval-ms", "9"),
         ("--transition-timeout-seconds", "0"),
+        ("--board-analysis-retry-seconds", "0"),
         ("--overlay-retry-ms", "99"),
         ("--max-overlay-retries", "0"),
         ("--new-board-delay-ms", "-1"),

@@ -13,6 +13,10 @@ from logicforge.automation.mouse import MouseButton, MouseController, ScreenPoin
 from logicforge.core import Board, BoardStateError
 from logicforge.infrastructure.windows import MouseAutomationError
 from logicforge.plugins.cats.board_actions import place_cat
+from logicforge.plugins.cats.exact_search import (
+    CatsExactSearchResult,
+    CatsExactSearchStatus,
+)
 from logicforge.plugins.cats.existing_cat import (
     CatsExistingCatDetection,
     CatsExistingCatDiagnostics,
@@ -86,6 +90,33 @@ def _grid_detection() -> GridDetection:
         columns=2,
         cells=cells,
         confidence=0.94,
+    )
+
+
+def _square_grid_detection(size: int) -> GridDetection:
+    """Build row-major square geometry for exact-search orchestration tests."""
+
+    lines = tuple(index * 20 for index in range(size + 1))
+    return GridDetection(
+        horizontal_lines=lines,
+        vertical_lines=lines,
+        rows=size,
+        columns=size,
+        cells=tuple(
+            CellBounds(
+                row=row,
+                column=column,
+                x=lines[column],
+                y=lines[row],
+                width=20,
+                height=20,
+                center_x=lines[column] + 10,
+                center_y=lines[row] + 10,
+            )
+            for row in range(size)
+            for column in range(size)
+        ),
+        confidence=0.95,
     )
 
 
@@ -407,6 +438,11 @@ def _configure_pipeline(
         "OpenCvCatsExistingCatDetector",
         _ExistingCatDetector,
     )
+    monkeypatch.setattr(
+        solve_script,
+        "solve_cats_exact",
+        lambda *args, **kwargs: _ambiguous_exact_result(),
+    )
 
 
 def _set_complete_result(board: Board) -> int:
@@ -425,6 +461,18 @@ def _set_stalled_result(board: Board) -> int:
     board.set_cat(0, 0)
     board.set_blocked(0, 1)
     return 2
+
+
+def _ambiguous_exact_result() -> CatsExactSearchResult:
+    """Return a controlled fail-closed fallback result for legacy fake boards."""
+
+    return CatsExactSearchResult(
+        status=CatsExactSearchStatus.AMBIGUOUS,
+        solution=None,
+        solutions_found=2,
+        search_nodes=4,
+        propagation_steps=1,
+    )
 
 
 def test_analyze_captured_board_runs_each_vision_stage_once_without_solving(
@@ -557,13 +605,17 @@ def test_analyze_captured_board_uses_tile_grid_primary_without_contour_detectors
 
 
 @pytest.mark.parametrize(
-    ("rule_application", "expected_status"),
-    ((_set_complete_result, "COMPLETE"), (_set_stalled_result, "STALLED")),
+    ("rule_application", "expected_status", "expected_plan_calls"),
+    (
+        (_set_complete_result, "COMPLETE", 1),
+        (_set_stalled_result, "AMBIGUOUS", 0),
+    ),
 )
 def test_solve_analyzed_board_creates_solves_and_maps_exactly_once(
     monkeypatch: pytest.MonkeyPatch,
     rule_application: Callable[[Board], int],
     expected_status: str,
+    expected_plan_calls: int,
 ) -> None:
     """Create one Board, run one rule loop, and build one plan per analysis."""
 
@@ -594,6 +646,11 @@ def test_solve_analyzed_board_creates_solves_and_maps_exactly_once(
     monkeypatch.setattr(solve_script, "Board", create_board)
     monkeypatch.setattr(solve_script, "apply_cats_rules_until_stalled", run_rules)
     monkeypatch.setattr(solve_script, "build_cat_click_plan", build_plan)
+    monkeypatch.setattr(
+        solve_script,
+        "solve_cats_exact",
+        lambda *args, **kwargs: _ambiguous_exact_result(),
+    )
     board_input = solve_script.CatsBoardInput(
         detected_board=_board_detection(),
         grid=_grid_detection(),
@@ -602,11 +659,197 @@ def test_solve_analyzed_board_creates_solves_and_maps_exactly_once(
 
     solved = solve_script.solve_analyzed_cats_board(_offset_window(), board_input)
 
-    assert calls == {"board": 1, "rules": 1, "plan": 1}
+    assert calls == {"board": 1, "rules": 1, "plan": expected_plan_calls}
     assert solved.board_input is board_input
     assert solved.successful_applications in (1, 2)
-    assert solved.click_plan is expected_plan
+    if expected_plan_calls:
+        assert solved.click_plan is expected_plan
+    else:
+        assert solved.click_plan == ()
     assert solved.status == expected_status
+
+
+def test_stalled_solve_runs_one_exact_search_on_same_board_and_original_matrix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pass the one logical Board and immutable colors into one fallback call."""
+
+    matrix = tuple(tuple(f"C{column}" for column in range(4)) for _ in range(4))
+    color_result = _color_result(matrix)
+    grid = _square_grid_detection(4)
+    board_input = solve_script.CatsBoardInput(
+        detected_board=BoardDetection(0, 0, 80, 80, 0.95),
+        grid=grid,
+        color_result=color_result,
+    )
+    solution = ((0, 1), (1, 3), (2, 0), (3, 2))
+    created_boards: list[Board] = []
+    search_calls: list[tuple[Board, object, int]] = []
+    actual_board = Board
+
+    def create_board(result: ColorDetectionResult) -> Board:
+        board = actual_board(result)
+        created_boards.append(board)
+        return board
+
+    exact_result = CatsExactSearchResult(
+        status=CatsExactSearchStatus.UNIQUE,
+        solution=solution,
+        solutions_found=1,
+        search_nodes=8,
+        propagation_steps=11,
+    )
+
+    def search(
+        board: Board,
+        original_matrix: object,
+        *,
+        maximum_search_nodes: int,
+    ) -> CatsExactSearchResult:
+        search_calls.append((board, original_matrix, maximum_search_nodes))
+        assert board.cells == [list(row) for row in matrix]
+        assert original_matrix is color_result.color_matrix
+        return exact_result
+
+    monkeypatch.setattr(solve_script, "Board", create_board)
+    monkeypatch.setattr(
+        solve_script,
+        "apply_cats_rules_until_stalled",
+        lambda board: 0,
+    )
+    monkeypatch.setattr(solve_script, "solve_cats_exact", search)
+
+    solved = solve_script.solve_analyzed_cats_board(
+        _offset_window(),
+        board_input,
+    )
+
+    assert len(created_boards) == 1
+    assert search_calls == [(created_boards[0], color_result.color_matrix, 250_000)]
+    assert solved.logical_board is created_boards[0]
+    assert solved.exact_search_result is exact_result
+    assert solved.status == "COMPLETE"
+    assert (
+        tuple((target.row, target.column) for target in solved.click_plan) == solution
+    )
+
+
+def test_rule_complete_board_does_not_invoke_exact_search(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep the seven rules as the preferred successful path."""
+
+    monkeypatch.setattr(
+        solve_script,
+        "apply_cats_rules_until_stalled",
+        _set_complete_result,
+    )
+
+    def forbidden_search(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        pytest.fail("exact search must not run after rule completion")
+
+    monkeypatch.setattr(solve_script, "solve_cats_exact", forbidden_search)
+    board_input = solve_script.CatsBoardInput(
+        detected_board=_board_detection(),
+        grid=_grid_detection(),
+        color_result=_color_result(),
+    )
+
+    solved = solve_script.solve_analyzed_cats_board(_offset_window(), board_input)
+
+    assert solved.status == "COMPLETE"
+    assert solved.exact_search_result is None
+
+
+@pytest.mark.parametrize(
+    ("search_status", "solutions_found", "solved_status"),
+    (
+        (CatsExactSearchStatus.UNSAT, 0, "UNSAT"),
+        (CatsExactSearchStatus.AMBIGUOUS, 2, "AMBIGUOUS"),
+        (CatsExactSearchStatus.LIMIT_REACHED, 0, "SEARCH_LIMIT"),
+    ),
+)
+def test_unresolved_exact_statuses_build_no_click_plan(
+    monkeypatch: pytest.MonkeyPatch,
+    search_status: CatsExactSearchStatus,
+    solutions_found: int,
+    solved_status: str,
+) -> None:
+    """Do not map even a partial K set after an inconclusive fallback."""
+
+    monkeypatch.setattr(
+        solve_script,
+        "apply_cats_rules_until_stalled",
+        _set_stalled_result,
+    )
+    monkeypatch.setattr(
+        solve_script,
+        "solve_cats_exact",
+        lambda *args, **kwargs: CatsExactSearchResult(
+            status=search_status,
+            solution=None,
+            solutions_found=solutions_found,
+            search_nodes=3,
+            propagation_steps=1,
+        ),
+    )
+
+    def forbidden_plan(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        pytest.fail("non-COMPLETE fallback must not build a click plan")
+
+    monkeypatch.setattr(solve_script, "build_cat_click_plan", forbidden_plan)
+    board_input = solve_script.CatsBoardInput(
+        detected_board=_board_detection(),
+        grid=_grid_detection(),
+        color_result=_color_result(),
+    )
+
+    solved = solve_script.solve_analyzed_cats_board(_offset_window(), board_input)
+
+    assert solved.status == solved_status
+    assert solved.click_plan == ()
+
+
+def test_exact_search_keeps_existing_cat_fixed_and_excludes_its_click(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Apply one fixed K to search while mapping only the three new cats."""
+
+    matrix = tuple(tuple(f"C{column}" for column in range(4)) for _ in range(4))
+    grid = _square_grid_detection(4)
+    existing = CatsExistingCatObservation(row=0, column=1, confidence=0.96)
+    board_input = solve_script.CatsBoardInput(
+        detected_board=BoardDetection(0, 0, 80, 80, 0.95),
+        grid=grid,
+        color_result=_color_result(matrix),
+        existing_cat_detection=CatsExistingCatDetection(
+            cats=(existing,),
+            diagnostics=CatsExistingCatDiagnostics(cells=()),
+        ),
+    )
+    monkeypatch.setattr(
+        solve_script,
+        "apply_cats_rules_until_stalled",
+        lambda board: 0,
+    )
+
+    solved = solve_script.solve_analyzed_cats_board(_offset_window(), board_input)
+
+    assert solved.status == "COMPLETE"
+    assert solved.exact_search_result is not None
+    assert solved.exact_search_result.solution == (
+        (0, 1),
+        (1, 3),
+        (2, 0),
+        (3, 2),
+    )
+    assert tuple((target.row, target.column) for target in solved.click_plan) == (
+        (1, 3),
+        (2, 0),
+        (3, 2),
+    )
 
 
 def test_existing_cat_is_placed_before_rules_and_excluded_from_click_plan(
@@ -1500,7 +1743,7 @@ def test_main_creates_one_board_and_calls_rule_loop_once(
 
     def solve(board: Board) -> int:
         solved_boards.append(board)
-        return 0
+        return _set_complete_result(board)
 
     monkeypatch.setattr(solve_script, "Board", create_board)
     monkeypatch.setattr(solve_script, "apply_cats_rules_until_stalled", solve)
@@ -1522,8 +1765,7 @@ def test_main_builds_click_plan_after_deduction(
         """Record deduction and create one confirmed cat for the plan."""
 
         events.append("deduction")
-        board.set_cat(0, 0)
-        return 1
+        return _set_complete_result(board)
 
     def build_plan(
         board: Board,
@@ -1587,7 +1829,11 @@ def test_main_reuses_same_window_and_grid_for_click_plan(
 
     monkeypatch.setattr(_CaptureService, "locate_window", locate_window)
     monkeypatch.setattr(_GridDetector, "detect", detect_grid)
-    monkeypatch.setattr(solve_script, "apply_cats_rules_until_stalled", lambda board: 0)
+    monkeypatch.setattr(
+        solve_script,
+        "apply_cats_rules_until_stalled",
+        _set_complete_result,
+    )
     monkeypatch.setattr(solve_script, "build_cat_click_plan", inspect_plan_inputs)
 
     assert solve_script.main() == 0
@@ -1907,7 +2153,7 @@ def test_complete_main_returns_zero(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_stalled_main_also_returns_zero(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Treat a valid fixed point with unresolved cells as operational success."""
+    """Fail closed without clicks when the fallback proves ambiguity."""
 
     _configure_pipeline(monkeypatch)
     monkeypatch.setattr(
@@ -1973,6 +2219,29 @@ def test_output_contains_successful_application_count(
     solve_script.main()
 
     assert "Successful rule applications: 2" in capsys.readouterr().out
+
+
+def test_output_contains_exact_search_status_and_effort(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Expose bounded fallback diagnostics without printing its branch tree."""
+
+    _configure_pipeline(monkeypatch)
+    monkeypatch.setattr(
+        solve_script,
+        "apply_cats_rules_until_stalled",
+        _set_stalled_result,
+    )
+
+    solve_script.main()
+
+    output = capsys.readouterr().out
+    assert "[solver] rules stalled; exact search started" in output
+    assert "Exact search: AMBIGUOUS" in output
+    assert "Search nodes: 4" in output
+    assert "Propagation steps: 1" in output
+    assert "Status: AMBIGUOUS" in output
 
 
 def test_output_contains_all_cat_coordinates(
@@ -2098,7 +2367,11 @@ def test_click_plan_error_returns_six(
     """Expose geometry inconsistency through its dedicated script exit code."""
 
     _configure_pipeline(monkeypatch)
-    monkeypatch.setattr(solve_script, "apply_cats_rules_until_stalled", lambda board: 0)
+    monkeypatch.setattr(
+        solve_script,
+        "apply_cats_rules_until_stalled",
+        _set_complete_result,
+    )
 
     def fail_mapping(
         board: Board,
@@ -2122,7 +2395,11 @@ def test_click_plan_error_prints_actionable_stderr(
     """Describe the failed mapping without masking unexpected exceptions."""
 
     _configure_pipeline(monkeypatch)
-    monkeypatch.setattr(solve_script, "apply_cats_rules_until_stalled", lambda board: 0)
+    monkeypatch.setattr(
+        solve_script,
+        "apply_cats_rules_until_stalled",
+        _set_complete_result,
+    )
 
     def fail_mapping(
         board: Board,

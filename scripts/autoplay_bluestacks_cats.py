@@ -66,6 +66,13 @@ type MonotonicFunction = Callable[[], float]
 type AnalyzeBoardFunction = Callable[[Screenshot], CatsBoardInput]
 type SolveBoardFunction = Callable[[WindowInfo, CatsBoardInput], CatsSolvedBoard]
 
+_TRANSIENT_BOARD_ANALYSIS_ERRORS = (
+    BoardDetectionError,
+    GridDetectionError,
+    ColorDetectionError,
+    CatsExistingCatDetectionError,
+)
+
 
 class CatPlanExecutor(Protocol):
     """Describe the existing click-plan executor used by autoplay."""
@@ -128,6 +135,7 @@ class CatsAutoplaySettings:
     click_delay_seconds: float = 0.01
     poll_interval_seconds: float = 0.10
     transition_timeout_seconds: float = 20.0
+    board_analysis_retry_seconds: float = 3.0
     overlay_retry_seconds: float = 0.75
     max_overlay_retries: int = 3
     new_board_delay_seconds: float = 0.30
@@ -140,6 +148,7 @@ class CatsAutoplaySettings:
             "click_delay_seconds": self.click_delay_seconds,
             "poll_interval_seconds": self.poll_interval_seconds,
             "transition_timeout_seconds": self.transition_timeout_seconds,
+            "board_analysis_retry_seconds": self.board_analysis_retry_seconds,
             "overlay_retry_seconds": self.overlay_retry_seconds,
             "new_board_delay_seconds": self.new_board_delay_seconds,
         }
@@ -152,6 +161,8 @@ class CatsAutoplaySettings:
             raise ValueError("poll_interval_seconds must be at least 0.01.")
         if self.transition_timeout_seconds <= 0.0:
             raise ValueError("transition_timeout_seconds must be positive.")
+        if self.board_analysis_retry_seconds <= 0.0:
+            raise ValueError("board_analysis_retry_seconds must be positive.")
         if self.overlay_retry_seconds < 0.10:
             raise ValueError("overlay_retry_seconds must be at least 0.10.")
         if self.new_board_delay_seconds < 0.0:
@@ -272,6 +283,15 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         help="Maximum seconds without meaningful progress (default: 20).",
     )
     parser.add_argument(
+        "--board-analysis-retry-seconds",
+        type=_positive_float,
+        default=3.0,
+        help=(
+            "Maximum seconds to retry transient BOARD analysis failures "
+            "(default: 3)."
+        ),
+    )
+    parser.add_argument(
         "--overlay-retry-ms",
         type=_minimum_int(100),
         default=750,
@@ -306,6 +326,7 @@ def settings_from_arguments(arguments: argparse.Namespace) -> CatsAutoplaySettin
         click_delay_seconds=arguments.click_delay_ms / 1000.0,
         poll_interval_seconds=arguments.poll_interval_ms / 1000.0,
         transition_timeout_seconds=arguments.transition_timeout_seconds,
+        board_analysis_retry_seconds=arguments.board_analysis_retry_seconds,
         overlay_retry_seconds=arguments.overlay_retry_ms / 1000.0,
         max_overlay_retries=arguments.max_overlay_retries,
         new_board_delay_seconds=arguments.new_board_delay_ms / 1000.0,
@@ -497,6 +518,9 @@ class CatsAutoplayRunner:
         self._last_screen_state: CatsScreenState | None = None
         self._last_progress_at = 0.0
         self._last_unknown_print_at: float | None = None
+        self._board_analysis_failure_started_at: float | None = None
+        self._last_board_analysis_error: RuntimeError | None = None
+        self._last_board_analysis_failure_log_at: float | None = None
         self._last_solved_color_matrix: tuple[tuple[str, ...], ...] | None = None
         self._last_level_click_at: float | None = None
         self._overlay_identity: _OverlayIdentity | None = None
@@ -595,9 +619,16 @@ class CatsAutoplayRunner:
 
         window, screenshot, detection = self._capture_and_classify()
         now = self._monotonic()
+        previous_state = self._last_screen_state
         state_changed = detection.state is not self._last_screen_state
         if state_changed:
-            self._last_progress_at = now
+            if (
+                previous_state is CatsScreenState.BOARD
+                and detection.state is not CatsScreenState.BOARD
+            ):
+                self._reset_board_analysis_failure()
+            if detection.state is not CatsScreenState.BOARD:
+                self._last_progress_at = now
             self._overlay_identity = None
             self._overlay_last_click_at = None
             self._overlay_retries = 0
@@ -667,7 +698,10 @@ class CatsAutoplayRunner:
             ):
                 return False, False
 
-        board_input = self._analyze_board(screenshot)
+        try:
+            board_input = self._analyze_board(screenshot)
+        except _TRANSIENT_BOARD_ANALYSIS_ERRORS as error:
+            return self._handle_transient_board_failure(error, now)
         print(
             f"[board] detected {board_input.grid.rows}x{board_input.grid.columns}, "
             f"colors={board_input.color_result.color_count}, "
@@ -682,13 +716,8 @@ class CatsAutoplayRunner:
         try:
             validate_cats_board_input_geometry(board_input)
         except CatsBoardGeometryMismatchError as error:
-            print(
-                "[board] rejected transient geometry: "
-                f"grid={board_input.grid.rows}x{board_input.grid.columns}, "
-                f"colors={board_input.color_result.color_count}; "
-                f"{error}; waiting for retry"
-            )
-            return False, False
+            return self._handle_transient_board_failure(error, now)
+        self._reset_board_analysis_failure()
         matrix = board_input.color_result.color_matrix
         if matrix == self._last_solved_color_matrix:
             print("[board] old completed color_matrix still visible; waiting")
@@ -734,6 +763,43 @@ class CatsAutoplayRunner:
             and self._solved_levels >= self._settings.max_levels
         )
         return True, reached_limit
+
+    def _handle_transient_board_failure(
+        self,
+        error: RuntimeError,
+        now: float,
+    ) -> tuple[bool, bool]:
+        """Retry one newly captured BOARD per poll within one bounded window."""
+
+        if self._board_analysis_failure_started_at is None:
+            self._board_analysis_failure_started_at = now
+        self._last_board_analysis_error = error
+        elapsed = max(0.0, now - self._board_analysis_failure_started_at)
+        retry_seconds = self._settings.board_analysis_retry_seconds
+        error_name = type(error).__name__
+        if elapsed >= retry_seconds:
+            print(
+                "[board] analysis did not stabilize within "
+                f"{retry_seconds:.1f}s; raising {error_name}: {error}"
+            )
+            raise error
+        if (
+            self._last_board_analysis_failure_log_at is None
+            or now - self._last_board_analysis_failure_log_at >= 1.0
+        ):
+            print(
+                f"[board] transient {error_name}; retrying "
+                f"({elapsed:.1f}/{retry_seconds:.1f}s): {error}"
+            )
+            self._last_board_analysis_failure_log_at = now
+        return False, False
+
+    def _reset_board_analysis_failure(self) -> None:
+        """Forget one consecutive transient-failure window after stabilization."""
+
+        self._board_analysis_failure_started_at = None
+        self._last_board_analysis_error = None
+        self._last_board_analysis_failure_log_at = None
 
     def _handle_overlay(
         self,
@@ -858,6 +924,8 @@ class CatsAutoplayRunner:
             solved.board_input.color_result,
             solved.logical_board,
             solved.successful_applications,
+            exact_search_result=solved.exact_search_result,
+            status=solved.status,
         )
         print_cat_click_plan(solved.click_plan)
         print(

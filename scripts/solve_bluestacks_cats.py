@@ -27,7 +27,15 @@ from logicforge.infrastructure.windows import (
     Win32BlueStacksWindowLocator,
     Win32MouseController,
 )
-from logicforge.plugins.cats import apply_cats_rules_until_stalled, place_cat
+from logicforge.plugins.cats import (
+    CatsExactSearchError,
+    CatsExactSearchResult,
+    CatsExactSearchStatus,
+    apply_cats_rules_until_stalled,
+    apply_unique_cats_exact_solution,
+    place_cat,
+    solve_cats_exact,
+)
 from logicforge.plugins.cats.existing_cat import (
     CatsExistingCatDetection,
     CatsExistingCatDetectionError,
@@ -101,6 +109,7 @@ class CatsSolvedBoard:
     successful_applications: int
     click_plan: tuple[CatClickTarget, ...]
     status: str
+    exact_search_result: CatsExactSearchResult | None = None
 
 
 type SleepFunction = Callable[[float], None]
@@ -306,8 +315,10 @@ def analyze_captured_cats_board(screenshot: Screenshot) -> CatsBoardInput:
 def solve_analyzed_cats_board(
     window: WindowInfo,
     board_input: CatsBoardInput,
+    *,
+    maximum_search_nodes: int = 250_000,
 ) -> CatsSolvedBoard:
-    """Create and solve one Board once, then build one final click plan."""
+    """Run preferred rules, then a bounded uniqueness proof only if stalled."""
 
     logical_board = Board(board_input.color_result)
     existing_coordinates = tuple(
@@ -316,21 +327,61 @@ def solve_analyzed_cats_board(
     for row, column in existing_coordinates:
         place_cat(logical_board, row, column)
     successful_applications = apply_cats_rules_until_stalled(logical_board)
-    if existing_coordinates:
-        click_plan = build_cat_click_plan(
+    status = classify_result(logical_board)
+    exact_search_result: CatsExactSearchResult | None = None
+    if status == "STALLED":
+        print("[solver] rules stalled; exact search started")
+        exact_search_result = solve_cats_exact(
             logical_board,
-            board_input.grid,
-            window,
-            existing_cat_coordinates=existing_coordinates,
+            board_input.color_result.color_matrix,
+            maximum_search_nodes=maximum_search_nodes,
         )
-    else:
-        click_plan = build_cat_click_plan(logical_board, board_input.grid, window)
+        print(
+            "[solver] exact search "
+            f"{exact_search_result.status.value} "
+            f"nodes={exact_search_result.search_nodes} "
+            f"propagation={exact_search_result.propagation_steps}"
+        )
+        if exact_search_result.status is CatsExactSearchStatus.UNIQUE:
+            apply_unique_cats_exact_solution(
+                logical_board,
+                exact_search_result,
+                original_color_matrix=board_input.color_result.color_matrix,
+            )
+            status = classify_result(logical_board)
+            if status != "COMPLETE":
+                raise CatsExactSearchError(
+                    "Applying a UNIQUE exact solution did not complete Board."
+                )
+        elif exact_search_result.status is CatsExactSearchStatus.UNSAT:
+            status = "UNSAT"
+        elif exact_search_result.status is CatsExactSearchStatus.AMBIGUOUS:
+            status = "AMBIGUOUS"
+        else:
+            status = "SEARCH_LIMIT"
+
+    click_plan: tuple[CatClickTarget, ...] = ()
+    if status == "COMPLETE":
+        if existing_coordinates:
+            click_plan = build_cat_click_plan(
+                logical_board,
+                board_input.grid,
+                window,
+                existing_cat_coordinates=existing_coordinates,
+            )
+        else:
+            click_plan = build_cat_click_plan(
+                logical_board,
+                board_input.grid,
+                window,
+            )
     return CatsSolvedBoard(
         board_input=board_input,
         logical_board=logical_board,
         successful_applications=successful_applications,
         click_plan=click_plan,
-        status=classify_result(logical_board),
+        status=status,
+        exact_search_result=exact_search_result,
     )
 
 
@@ -392,6 +443,9 @@ def print_solve_information(
     color_result: ColorDetectionResult,
     logical_board: Board,
     successful_applications: int,
+    *,
+    exact_search_result: CatsExactSearchResult | None = None,
+    status: str | None = None,
 ) -> None:
     """Print capture evidence, immutable input, and the mutated deduction result."""
 
@@ -411,13 +465,19 @@ def print_solve_information(
     print("\nInitial board:")
     print(format_matrix(color_result.color_matrix))
     print(f"\nSuccessful rule applications: {successful_applications}")
+    if exact_search_result is None:
+        print("Exact search: not needed")
+    else:
+        print(f"Exact search: {exact_search_result.status.value}")
+        print(f"Search nodes: {exact_search_result.search_nodes}")
+        print(f"Propagation steps: {exact_search_result.propagation_steps}")
     print("\nFinal board:")
     print(format_matrix(logical_board.cells))
     print(f"\nCats found: {len(cats)}")
     for row, column in cats:
         print(f"K: row={row}, column={column}")
     print(f"\nUnresolved cells: {unresolved_cells}")
-    print(f"Status: {classify_result(logical_board)}")
+    print(f"Status: {status or classify_result(logical_board)}")
 
 
 def main(arguments: Sequence[str] | None = None) -> int:
@@ -453,7 +513,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
 
     try:
         solved = solve_analyzed_cats_board(window, board_input)
-    except BoardStateError as error:
+    except (BoardStateError, CatsExactSearchError) as error:
         print(f"Cats deduction failed: {error}", file=sys.stderr)
         return 5
     except CatClickPlanError as error:
@@ -468,6 +528,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
         solved.board_input.color_result,
         solved.logical_board,
         solved.successful_applications,
+        exact_search_result=solved.exact_search_result,
+        status=solved.status,
     )
     print_cat_click_plan(solved.click_plan)
 

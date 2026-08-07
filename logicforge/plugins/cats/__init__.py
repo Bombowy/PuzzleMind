@@ -10,6 +10,13 @@ from logicforge.plugins.cats.color_confined_to_line_rule import (
 from logicforge.plugins.cats.color_subset_confined_to_lines_rule import (
     ColorSubsetConfinedToLinesRule,
 )
+from logicforge.plugins.cats.exact_search import (
+    CatsExactSearchError,
+    CatsExactSearchResult,
+    CatsExactSearchStatus,
+    apply_unique_cats_exact_solution,
+    solve_cats_exact,
+)
 from logicforge.plugins.cats.existing_cat import (
     CatsExistingCatCellDiagnostic,
     CatsExistingCatDetection,
@@ -51,6 +58,9 @@ from logicforge.plugins.cats.tile_grid import (
 
 __all__ = [
     "AdjacentColorPairExclusionRule",
+    "CatsExactSearchError",
+    "CatsExactSearchResult",
+    "CatsExactSearchStatus",
     "CatsExistingCatCellDiagnostic",
     "CatsExistingCatDetection",
     "CatsExistingCatDetectionError",
@@ -77,6 +87,8 @@ __all__ = [
     "SingleRemainingColorCellRule",
     "SingleRemainingLineCellRule",
     "apply_cats_rules_until_stalled",
+    "apply_unique_cats_exact_solution",
     "block_cell",
     "place_cat",
+    "solve_cats_exact",
 ]

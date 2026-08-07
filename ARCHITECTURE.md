@@ -334,6 +334,38 @@ validation still covers every K and requires the full row/column/color/non-touch
 solution. The click plan is exactly final K minus validated existing coordinates,
 so counters and double-click execution cover only newly placed cats.
 
+## Cats deterministic exact-search fallback
+
+The seven ordered Cats rules remain the preferred deduction mechanism. Exact
+search is called only when their fixed-point loop leaves `C<n>` cells. It consumes
+the current `Board` plus the immutable `ColorDetectionResult.color_matrix`, which
+is authoritative for the original color under both newly deduced and pre-existing
+`K` cells.
+
+Branching never mutates or clones `Board`. A lightweight immutable state retains
+candidate coordinates, selected cats, and used rows, columns, and original
+colors. Every assignment removes candidates in its row, column, color, and eight
+neighbor area. Color, row, and column singleton constraints propagate to a fixed
+point before branching and after every hypothetical assignment. Contradictory
+zero-candidate groups close the branch.
+
+MRV considers unresolved color groups, then rows, then columns. Ordering is
+candidate count, group type, numeric color suffix or line index, and row-major
+coordinates; branch coordinates are also row-major. The traversal is therefore
+independent of hash/set iteration and random state. Search retains the first
+solution and continues until the tree is exhausted or a second distinct solution
+is found. Its public statuses are `UNIQUE`, `UNSAT`, `AMBIGUOUS`, and
+`LIMIT_REACHED`; a deterministic 250,000-node default replaces a wall-clock
+timeout.
+
+Only `UNIQUE` is applied to the same logical Board, after validating the complete
+row/column/color/non-touch solution. Existing `K` assignments stay fixed;
+remaining solution cells use `place_cat()` and any safe residual non-solution
+unknowns use `block_cell()`. All other statuses produce no click plan. Autoplay
+inherits this behavior through `solve_analyzed_cats_board()` and still validates
+the complete final Board while excluding detected existing cats from new click
+targets.
+
 ## Solver module
 
 The solver is an application use case, not a collection of puzzle rules. It will
@@ -342,9 +374,9 @@ stalled, contradictory, cancelled, or limited by policy.
 
 Solver iterations will mutate the one supplied `Board` through its narrow methods.
 Lifecycle and explanation metadata may record what changed, but must not duplicate
-the board matrix or create a board copy after every deduction. Search, guessing,
-or probabilistic strategies are outside the v1.0 scope unless later introduced
-through explicit strategy contracts.
+the board matrix or create a board copy after every deduction. The Cats plugin's
+bounded exact fallback is an explicit deterministic strategy; probabilistic or
+first-solution guessing remains outside the v1.0 scope.
 
 ## Plugin system
 

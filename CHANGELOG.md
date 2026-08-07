@@ -81,6 +81,8 @@ API reaches stability.
   board border.
 - Backend-neutral existing-cat observations/diagnostics, a CellBounds-only
   classical OpenCV detector and renderer, and a zero-click diagnostic command.
+- Backend-neutral deterministic Cats exact search with immutable result/status
+  diagnostics, singleton propagation, MRV branching, and a 250,000-node limit.
 
 ### Changed
 
@@ -122,6 +124,12 @@ API reaches stability.
 - Select maximal independently supported Cats row/column runs before Cartesian
   slot assignment, retain missing slots in full public geometry, initialize the
   single Board through `place_cat()`, and exclude existing cats from click plans.
+- Keep all seven Cats rules as first-line deduction, then run exact search only
+  after `STALLED`; apply only a proven `UNIQUE` solution to the same Board and
+  fail closed for `UNSAT`, `AMBIGUOUS`, or `LIMIT_REACHED`.
+- Give execute-mode Cats BOARD analysis a separate bounded 3-second stabilization
+  window. Every retry captures a new poll frame; dry-run remains one-shot and the
+  independent 20-second no-progress timeout remains unchanged.
 
 ### Fixed
 
@@ -151,6 +159,11 @@ API reaches stability.
 - Prevent one existing cat from shrinking a supported live-like 6x6 lattice to an
   inner 5x5, reject thin X marks as cats, fail closed on conflicting existing-cat
   invariants, and validate final solutions over all K while clicking only new K.
+- Prevent stalled Cats boards from clicking an arbitrary first completion by
+  continuing search through a second distinct solution before allowing clicks.
+- Retry transient board, grid, color, existing-cat, and Cats input-geometry
+  failures caused by short-lived gameplay animation without solving or clicking
+  rejected frames; re-raise the current typed error when the window expires.
 
 ## [0.1.0] - 2026-08-06
 
