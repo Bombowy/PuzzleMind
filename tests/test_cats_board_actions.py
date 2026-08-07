@@ -45,7 +45,6 @@ def _board() -> Board:
         diagnostics=ColorDetectionDiagnostics(
             rows=4,
             columns=4,
-            sample_inner_fraction=0.65,
             cluster_distance_threshold=18.0,
             sample_pixel_counts=(100,) * 16,
             within_cell_spreads=(1.0,) * 16,
@@ -90,7 +89,6 @@ def _rectangular_board() -> Board:
         diagnostics=ColorDetectionDiagnostics(
             rows=3,
             columns=5,
-            sample_inner_fraction=0.65,
             cluster_distance_threshold=18.0,
             sample_pixel_counts=(100,) * 15,
             within_cell_spreads=(1.0,) * 15,

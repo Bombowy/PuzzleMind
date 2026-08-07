@@ -1,4 +1,4 @@
-"""Immutable in-memory screenshot model used by future vision components."""
+"""Immutable in-memory screenshot model shared by vision components."""
 
 from dataclasses import dataclass
 from datetime import datetime
@@ -12,7 +12,7 @@ class Screenshot:
     """Own one immutable, contiguous, three-channel BGR image captured in memory.
 
     The model copies caller-owned pixels and marks its internal array read-only so
-    future detectors can safely share a snapshot without observing external
+    detectors can safely share a snapshot without observing external
     mutations. File paths and encoded PNG data deliberately do not belong here.
     """
 

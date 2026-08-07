@@ -45,14 +45,12 @@ class ColorObservation:
 class ColorDetectionDiagnostics:
     """Expose primitive sampling and clustering evidence without OpenCV objects.
 
-    ``sample_inner_fraction`` is retained for compatibility with existing result
-    consumers. ``sample_pixel_counts`` records all four corner-patch pixels before
-    corner-level outlier rejection.
+    ``sample_pixel_counts`` records all four corner-patch pixels before corner-level
+    outlier rejection.
     """
 
     rows: int
     columns: int
-    sample_inner_fraction: float
     cluster_distance_threshold: float
     sample_pixel_counts: tuple[int, ...]
     within_cell_spreads: tuple[float, ...]
@@ -65,10 +63,6 @@ class ColorDetectionDiagnostics:
 
         if self.rows <= 0 or self.columns <= 0:
             raise ValueError("Color diagnostics dimensions must be positive.")
-        if not isfinite(self.sample_inner_fraction) or not (
-            0.0 < self.sample_inner_fraction <= 1.0
-        ):
-            raise ValueError("Diagnostic sample fraction must be within (0.0, 1.0].")
         if not isfinite(self.cluster_distance_threshold) or (
             self.cluster_distance_threshold <= 0.0
         ):

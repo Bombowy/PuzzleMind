@@ -30,7 +30,6 @@ def _color_result() -> ColorDetectionResult:
     diagnostics = ColorDetectionDiagnostics(
         rows=2,
         columns=3,
-        sample_inner_fraction=0.65,
         cluster_distance_threshold=18.0,
         sample_pixel_counts=(100,) * 6,
         within_cell_spreads=(1.0,) * 6,

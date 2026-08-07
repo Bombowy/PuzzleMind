@@ -86,7 +86,6 @@ def _color_result(matrix: ColorMatrix) -> ColorDetectionResult:
         diagnostics=ColorDetectionDiagnostics(
             rows=rows,
             columns=columns,
-            sample_inner_fraction=0.5,
             cluster_distance_threshold=18.0,
             sample_pixel_counts=(16,) * (rows * columns),
             within_cell_spreads=(0.0,) * (rows * columns),

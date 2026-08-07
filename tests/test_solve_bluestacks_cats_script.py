@@ -9,6 +9,9 @@ import numpy as np
 import pytest
 from scripts import solve_bluestacks_cats as solve_script
 
+from logicforge.application.cats import click_plan as cats_click_plan
+from logicforge.application.cats import solving as cats_solving
+from logicforge.application.cats.models import CatsSolveStatus
 from logicforge.automation.mouse import MouseButton, MouseController, ScreenPoint
 from logicforge.core import Board, BoardStateError
 from logicforge.infrastructure.windows import MouseAutomationError
@@ -185,7 +188,6 @@ def _color_result(
         diagnostics=ColorDetectionDiagnostics(
             rows=rows,
             columns=columns,
-            sample_inner_fraction=0.65,
             cluster_distance_threshold=18.0,
             sample_pixel_counts=(100,) * (rows * columns),
             within_cell_spreads=(1.0,) * (rows * columns),
@@ -266,7 +268,6 @@ def _color_error() -> ColorDetectionError:
         ColorDetectionDiagnostics(
             rows=2,
             columns=2,
-            sample_inner_fraction=0.65,
             cluster_distance_threshold=18.0,
             sample_pixel_counts=(),
             within_cell_spreads=(),
@@ -439,7 +440,7 @@ def _configure_pipeline(
         _ExistingCatDetector,
     )
     monkeypatch.setattr(
-        solve_script,
+        cats_solving,
         "solve_cats_exact",
         lambda *args, **kwargs: _ambiguous_exact_result(),
     )
@@ -547,9 +548,6 @@ def test_analyze_captured_board_runs_each_vision_stage_once_without_solving(
         "OpenCvCatsExistingCatDetector",
         CountingExistingCatDetector,
     )
-    monkeypatch.setattr(solve_script, "Board", forbidden)
-    monkeypatch.setattr(solve_script, "apply_cats_rules_until_stalled", forbidden)
-
     result = solve_script.analyze_captured_cats_board(_CaptureService.screenshot)
 
     assert calls == {"board": 1, "grid": 1, "color": 1, "cat": 1}
@@ -607,14 +605,14 @@ def test_analyze_captured_board_uses_tile_grid_primary_without_contour_detectors
 @pytest.mark.parametrize(
     ("rule_application", "expected_status", "expected_plan_calls"),
     (
-        (_set_complete_result, "COMPLETE", 1),
-        (_set_stalled_result, "AMBIGUOUS", 0),
+        (_set_complete_result, CatsSolveStatus.COMPLETE, 1),
+        (_set_stalled_result, CatsSolveStatus.AMBIGUOUS, 0),
     ),
 )
 def test_solve_analyzed_board_creates_solves_and_maps_exactly_once(
     monkeypatch: pytest.MonkeyPatch,
     rule_application: Callable[[Board], int],
-    expected_status: str,
+    expected_status: CatsSolveStatus,
     expected_plan_calls: int,
 ) -> None:
     """Create one Board, run one rule loop, and build one plan per analysis."""
@@ -643,11 +641,11 @@ def test_solve_analyzed_board_creates_solves_and_maps_exactly_once(
         assert window == _offset_window()
         return expected_plan
 
-    monkeypatch.setattr(solve_script, "Board", create_board)
-    monkeypatch.setattr(solve_script, "apply_cats_rules_until_stalled", run_rules)
-    monkeypatch.setattr(solve_script, "build_cat_click_plan", build_plan)
+    monkeypatch.setattr(cats_solving, "Board", create_board)
+    monkeypatch.setattr(cats_solving, "apply_cats_rules_until_stalled", run_rules)
+    monkeypatch.setattr(cats_solving, "build_cat_click_plan", build_plan)
     monkeypatch.setattr(
-        solve_script,
+        cats_solving,
         "solve_cats_exact",
         lambda *args, **kwargs: _ambiguous_exact_result(),
     )
@@ -711,13 +709,13 @@ def test_stalled_solve_runs_one_exact_search_on_same_board_and_original_matrix(
         assert original_matrix is color_result.color_matrix
         return exact_result
 
-    monkeypatch.setattr(solve_script, "Board", create_board)
+    monkeypatch.setattr(cats_solving, "Board", create_board)
     monkeypatch.setattr(
-        solve_script,
+        cats_solving,
         "apply_cats_rules_until_stalled",
         lambda board: 0,
     )
-    monkeypatch.setattr(solve_script, "solve_cats_exact", search)
+    monkeypatch.setattr(cats_solving, "solve_cats_exact", search)
 
     solved = solve_script.solve_analyzed_cats_board(
         _offset_window(),
@@ -728,7 +726,7 @@ def test_stalled_solve_runs_one_exact_search_on_same_board_and_original_matrix(
     assert search_calls == [(created_boards[0], color_result.color_matrix, 250_000)]
     assert solved.logical_board is created_boards[0]
     assert solved.exact_search_result is exact_result
-    assert solved.status == "COMPLETE"
+    assert solved.status is CatsSolveStatus.COMPLETE
     assert (
         tuple((target.row, target.column) for target in solved.click_plan) == solution
     )
@@ -740,7 +738,7 @@ def test_rule_complete_board_does_not_invoke_exact_search(
     """Keep the seven rules as the preferred successful path."""
 
     monkeypatch.setattr(
-        solve_script,
+        cats_solving,
         "apply_cats_rules_until_stalled",
         _set_complete_result,
     )
@@ -749,7 +747,7 @@ def test_rule_complete_board_does_not_invoke_exact_search(
         del args, kwargs
         pytest.fail("exact search must not run after rule completion")
 
-    monkeypatch.setattr(solve_script, "solve_cats_exact", forbidden_search)
+    monkeypatch.setattr(cats_solving, "solve_cats_exact", forbidden_search)
     board_input = solve_script.CatsBoardInput(
         detected_board=_board_detection(),
         grid=_grid_detection(),
@@ -758,33 +756,33 @@ def test_rule_complete_board_does_not_invoke_exact_search(
 
     solved = solve_script.solve_analyzed_cats_board(_offset_window(), board_input)
 
-    assert solved.status == "COMPLETE"
+    assert solved.status is CatsSolveStatus.COMPLETE
     assert solved.exact_search_result is None
 
 
 @pytest.mark.parametrize(
     ("search_status", "solutions_found", "solved_status"),
     (
-        (CatsExactSearchStatus.UNSAT, 0, "UNSAT"),
-        (CatsExactSearchStatus.AMBIGUOUS, 2, "AMBIGUOUS"),
-        (CatsExactSearchStatus.LIMIT_REACHED, 0, "SEARCH_LIMIT"),
+        (CatsExactSearchStatus.UNSAT, 0, CatsSolveStatus.UNSAT),
+        (CatsExactSearchStatus.AMBIGUOUS, 2, CatsSolveStatus.AMBIGUOUS),
+        (CatsExactSearchStatus.LIMIT_REACHED, 0, CatsSolveStatus.SEARCH_LIMIT),
     ),
 )
 def test_unresolved_exact_statuses_build_no_click_plan(
     monkeypatch: pytest.MonkeyPatch,
     search_status: CatsExactSearchStatus,
     solutions_found: int,
-    solved_status: str,
+    solved_status: CatsSolveStatus,
 ) -> None:
     """Do not map even a partial K set after an inconclusive fallback."""
 
     monkeypatch.setattr(
-        solve_script,
+        cats_solving,
         "apply_cats_rules_until_stalled",
         _set_stalled_result,
     )
     monkeypatch.setattr(
-        solve_script,
+        cats_solving,
         "solve_cats_exact",
         lambda *args, **kwargs: CatsExactSearchResult(
             status=search_status,
@@ -799,7 +797,7 @@ def test_unresolved_exact_statuses_build_no_click_plan(
         del args, kwargs
         pytest.fail("non-COMPLETE fallback must not build a click plan")
 
-    monkeypatch.setattr(solve_script, "build_cat_click_plan", forbidden_plan)
+    monkeypatch.setattr(cats_solving, "build_cat_click_plan", forbidden_plan)
     board_input = solve_script.CatsBoardInput(
         detected_board=_board_detection(),
         grid=_grid_detection(),
@@ -830,14 +828,14 @@ def test_exact_search_keeps_existing_cat_fixed_and_excludes_its_click(
         ),
     )
     monkeypatch.setattr(
-        solve_script,
+        cats_solving,
         "apply_cats_rules_until_stalled",
         lambda board: 0,
     )
 
     solved = solve_script.solve_analyzed_cats_board(_offset_window(), board_input)
 
-    assert solved.status == "COMPLETE"
+    assert solved.status is CatsSolveStatus.COMPLETE
     assert solved.exact_search_result is not None
     assert solved.exact_search_result.solution == (
         (0, 1),
@@ -902,7 +900,7 @@ def test_existing_cat_is_placed_before_rules_and_excluded_from_click_plan(
                 place_cat(board, row, column)
         return 5
 
-    monkeypatch.setattr(solve_script, "apply_cats_rules_until_stalled", complete)
+    monkeypatch.setattr(cats_solving, "apply_cats_rules_until_stalled", complete)
     solved = solve_script.solve_analyzed_cats_board(
         WindowInfo("BlueStacks", WindowBounds(100, 200, 120, 120)),
         board_input,
@@ -960,7 +958,7 @@ def test_solve_captured_board_composes_analysis_then_solve_once(
         logical_board=_logical_board(),
         successful_applications=0,
         click_plan=(),
-        status="STALLED",
+        status=CatsSolveStatus.STALLED,
     )
     calls = {"analyze": 0, "solve": 0}
 
@@ -1061,7 +1059,7 @@ def test_classify_result_returns_complete_for_terminal_board() -> None:
     board.set_blocked(1, 0)
     board.set_cat(1, 1)
 
-    assert solve_script.classify_result(board) == "COMPLETE"
+    assert solve_script.classify_result(board) is CatsSolveStatus.COMPLETE
 
 
 def test_classify_result_returns_stalled_with_unknown_cell() -> None:
@@ -1070,7 +1068,19 @@ def test_classify_result_returns_stalled_with_unknown_cell() -> None:
     board = _logical_board()
     board.set_cat(0, 0)
 
-    assert solve_script.classify_result(board) == "STALLED"
+    assert solve_script.classify_result(board) is CatsSolveStatus.STALLED
+
+
+def test_cats_solve_status_preserves_existing_cli_values() -> None:
+    """Close the production status API while retaining exact terminal text."""
+
+    assert tuple(status.value for status in CatsSolveStatus) == (
+        "COMPLETE",
+        "STALLED",
+        "UNSAT",
+        "AMBIGUOUS",
+        "SEARCH_LIMIT",
+    )
 
 
 def test_get_grid_cell_returns_first_cell() -> None:
@@ -1381,7 +1391,7 @@ def test_dimension_error_creates_no_partial_click_plan(
         mapping_calls.append((row, column))
         raise AssertionError("partial click plan was started")
 
-    monkeypatch.setattr(solve_script, "create_cat_click_target", record_mapping)
+    monkeypatch.setattr(cats_click_plan, "create_cat_click_target", record_mapping)
 
     with pytest.raises(solve_script.CatClickPlanError):
         solve_script.build_cat_click_plan(
@@ -1745,8 +1755,8 @@ def test_main_creates_one_board_and_calls_rule_loop_once(
         solved_boards.append(board)
         return _set_complete_result(board)
 
-    monkeypatch.setattr(solve_script, "Board", create_board)
-    monkeypatch.setattr(solve_script, "apply_cats_rules_until_stalled", solve)
+    monkeypatch.setattr(cats_solving, "Board", create_board)
+    monkeypatch.setattr(cats_solving, "apply_cats_rules_until_stalled", solve)
 
     assert solve_script.main() == 0
     assert len(created_boards) == 1
@@ -1779,8 +1789,8 @@ def test_main_builds_click_plan_after_deduction(
         assert board.is_cat(0, 0)
         return ()
 
-    monkeypatch.setattr(solve_script, "apply_cats_rules_until_stalled", solve)
-    monkeypatch.setattr(solve_script, "build_cat_click_plan", build_plan)
+    monkeypatch.setattr(cats_solving, "apply_cats_rules_until_stalled", solve)
+    monkeypatch.setattr(cats_solving, "build_cat_click_plan", build_plan)
 
     assert solve_script.main() == 0
     assert events == ["deduction", "click-plan"]
@@ -1830,11 +1840,11 @@ def test_main_reuses_same_window_and_grid_for_click_plan(
     monkeypatch.setattr(_CaptureService, "locate_window", locate_window)
     monkeypatch.setattr(_GridDetector, "detect", detect_grid)
     monkeypatch.setattr(
-        solve_script,
+        cats_solving,
         "apply_cats_rules_until_stalled",
         _set_complete_result,
     )
-    monkeypatch.setattr(solve_script, "build_cat_click_plan", inspect_plan_inputs)
+    monkeypatch.setattr(cats_solving, "build_cat_click_plan", inspect_plan_inputs)
 
     assert solve_script.main() == 0
     assert len(located_windows) == 1
@@ -1849,7 +1859,7 @@ def test_main_prints_dry_run_click_plan(
 
     _configure_pipeline(monkeypatch)
     monkeypatch.setattr(
-        solve_script,
+        cats_solving,
         "apply_cats_rules_until_stalled",
         _set_complete_result,
     )
@@ -1895,7 +1905,7 @@ def test_dry_run_does_not_construct_or_call_mouse_controller(
 
     _configure_pipeline(monkeypatch)
     monkeypatch.setattr(
-        solve_script,
+        cats_solving,
         "apply_cats_rules_until_stalled",
         _set_complete_result,
     )
@@ -1919,7 +1929,7 @@ def test_execute_clicks_runs_complete_plan_with_one_controller(
 
     _configure_pipeline(monkeypatch)
     monkeypatch.setattr(
-        solve_script,
+        cats_solving,
         "apply_cats_rules_until_stalled",
         _set_complete_result,
     )
@@ -1955,7 +1965,7 @@ def test_main_converts_cli_delay_to_seconds(
 
     _configure_pipeline(monkeypatch)
     monkeypatch.setattr(
-        solve_script,
+        cats_solving,
         "apply_cats_rules_until_stalled",
         _set_complete_result,
     )
@@ -1989,7 +1999,7 @@ def test_execute_empty_plan_does_not_construct_native_adapter(
     """Return success and print zero without resolving any native dependency."""
 
     _configure_pipeline(monkeypatch)
-    monkeypatch.setattr(solve_script, "apply_cats_rules_until_stalled", lambda board: 0)
+    monkeypatch.setattr(cats_solving, "apply_cats_rules_until_stalled", lambda board: 0)
 
     def reject_controller_creation() -> _FakeMouseController:
         raise AssertionError("empty plan must not create a mouse controller")
@@ -2012,7 +2022,7 @@ def test_execute_success_prints_target_click_and_delay_counts(
 
     _configure_pipeline(monkeypatch)
     monkeypatch.setattr(
-        solve_script,
+        cats_solving,
         "apply_cats_rules_until_stalled",
         _set_complete_result,
     )
@@ -2034,7 +2044,7 @@ def test_execute_success_prints_default_ten_millisecond_delay(
 
     _configure_pipeline(monkeypatch)
     monkeypatch.setattr(
-        solve_script,
+        cats_solving,
         "apply_cats_rules_until_stalled",
         _set_complete_result,
     )
@@ -2090,8 +2100,8 @@ def test_execute_mode_captures_once_and_solves_once(
         return _set_complete_result(board)
 
     monkeypatch.setattr(_CaptureService, "capture_window", capture_once)
-    monkeypatch.setattr(solve_script, "Board", create_board)
-    monkeypatch.setattr(solve_script, "apply_cats_rules_until_stalled", solve_once)
+    monkeypatch.setattr(cats_solving, "Board", create_board)
+    monkeypatch.setattr(cats_solving, "apply_cats_rules_until_stalled", solve_once)
     monkeypatch.setattr(solve_script, "Win32MouseController", _FakeMouseController)
 
     assert solve_script.main(("--execute-clicks", "--click-delay-ms", "0")) == 0
@@ -2116,7 +2126,7 @@ def test_click_execution_errors_return_seven_and_actionable_stderr(
 
     _configure_pipeline(monkeypatch)
     monkeypatch.setattr(
-        solve_script,
+        cats_solving,
         "apply_cats_rules_until_stalled",
         _set_complete_result,
     )
@@ -2144,7 +2154,7 @@ def test_complete_main_returns_zero(monkeypatch: pytest.MonkeyPatch) -> None:
 
     _configure_pipeline(monkeypatch)
     monkeypatch.setattr(
-        solve_script,
+        cats_solving,
         "apply_cats_rules_until_stalled",
         _set_complete_result,
     )
@@ -2157,7 +2167,7 @@ def test_stalled_main_also_returns_zero(monkeypatch: pytest.MonkeyPatch) -> None
 
     _configure_pipeline(monkeypatch)
     monkeypatch.setattr(
-        solve_script,
+        cats_solving,
         "apply_cats_rules_until_stalled",
         _set_stalled_result,
     )
@@ -2173,7 +2183,7 @@ def test_output_contains_initial_immutable_color_matrix(
 
     _configure_pipeline(monkeypatch)
     monkeypatch.setattr(
-        solve_script,
+        cats_solving,
         "apply_cats_rules_until_stalled",
         _set_complete_result,
     )
@@ -2192,7 +2202,7 @@ def test_output_contains_final_mutable_board_matrix(
 
     _configure_pipeline(monkeypatch)
     monkeypatch.setattr(
-        solve_script,
+        cats_solving,
         "apply_cats_rules_until_stalled",
         _set_complete_result,
     )
@@ -2211,7 +2221,7 @@ def test_output_contains_successful_application_count(
 
     _configure_pipeline(monkeypatch)
     monkeypatch.setattr(
-        solve_script,
+        cats_solving,
         "apply_cats_rules_until_stalled",
         _set_stalled_result,
     )
@@ -2229,7 +2239,7 @@ def test_output_contains_exact_search_status_and_effort(
 
     _configure_pipeline(monkeypatch)
     monkeypatch.setattr(
-        solve_script,
+        cats_solving,
         "apply_cats_rules_until_stalled",
         _set_stalled_result,
     )
@@ -2252,7 +2262,7 @@ def test_output_contains_all_cat_coordinates(
 
     _configure_pipeline(monkeypatch)
     monkeypatch.setattr(
-        solve_script,
+        cats_solving,
         "apply_cats_rules_until_stalled",
         _set_complete_result,
     )
@@ -2328,7 +2338,7 @@ def test_board_state_error_from_rules_returns_five(
         raise BoardStateError(f"synthetic contradiction at {board.get(0, 0)}")
 
     monkeypatch.setattr(
-        solve_script,
+        cats_solving,
         "apply_cats_rules_until_stalled",
         fail_deduction,
     )
@@ -2349,7 +2359,7 @@ def test_board_state_error_does_not_print_false_status(
         raise BoardStateError(f"synthetic contradiction at {board.get(0, 0)}")
 
     monkeypatch.setattr(
-        solve_script,
+        cats_solving,
         "apply_cats_rules_until_stalled",
         fail_deduction,
     )
@@ -2368,7 +2378,7 @@ def test_click_plan_error_returns_six(
 
     _configure_pipeline(monkeypatch)
     monkeypatch.setattr(
-        solve_script,
+        cats_solving,
         "apply_cats_rules_until_stalled",
         _set_complete_result,
     )
@@ -2383,7 +2393,7 @@ def test_click_plan_error_returns_six(
         del board, grid, window
         raise solve_script.CatClickPlanError("synthetic click-plan failure")
 
-    monkeypatch.setattr(solve_script, "build_cat_click_plan", fail_mapping)
+    monkeypatch.setattr(cats_solving, "build_cat_click_plan", fail_mapping)
 
     assert solve_script.main() == 6
 
@@ -2396,7 +2406,7 @@ def test_click_plan_error_prints_actionable_stderr(
 
     _configure_pipeline(monkeypatch)
     monkeypatch.setattr(
-        solve_script,
+        cats_solving,
         "apply_cats_rules_until_stalled",
         _set_complete_result,
     )
@@ -2411,7 +2421,7 @@ def test_click_plan_error_prints_actionable_stderr(
         del board, grid, window
         raise solve_script.CatClickPlanError("synthetic click-plan failure")
 
-    monkeypatch.setattr(solve_script, "build_cat_click_plan", fail_mapping)
+    monkeypatch.setattr(cats_solving, "build_cat_click_plan", fail_mapping)
 
     solve_script.main()
 

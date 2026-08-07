@@ -1,4 +1,4 @@
-"""Single mutable logical board consumed directly by future solver rules."""
+"""Single mutable logical board consumed by plugin rules and exact solving."""
 
 from __future__ import annotations
 

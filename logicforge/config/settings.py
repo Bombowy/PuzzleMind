@@ -543,7 +543,6 @@ class ColorDetectionSettings:
     implementation-calibrated units and does not claim to be a CIE Delta-E value.
     """
 
-    sample_inner_fraction: float = 0.65
     corner_sample_patch_fraction: float = 0.12
     corner_sample_offset_fraction: float = 0.1
     corner_sample_minimum_consistent_patches: int = 3
@@ -557,8 +556,6 @@ class ColorDetectionSettings:
     def __post_init__(self) -> None:
         """Reject settings that could create empty samples or invalid confidence."""
 
-        if not 0.0 < self.sample_inner_fraction <= 1.0:
-            raise ValueError("sample_inner_fraction must be within (0.0, 1.0].")
         if not isfinite(self.corner_sample_patch_fraction) or not (
             0.0 < self.corner_sample_patch_fraction < 0.5
         ):
@@ -624,7 +621,7 @@ class VisionSettings:
 
 @dataclass(frozen=True, slots=True)
 class SolverSettings:
-    """Hold safety limits for future deterministic solver orchestration.
+    """Hold safety limits for the reserved generic solver orchestration.
 
     TODO: Add iteration and timeout limits in v0.4 together with explicit failure
     results, cancellation behavior, and reproducibility guarantees.

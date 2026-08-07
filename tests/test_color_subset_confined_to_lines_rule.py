@@ -40,7 +40,6 @@ def _board_from_values(values: tuple[tuple[str, ...], ...]) -> Board:
         diagnostics=ColorDetectionDiagnostics(
             rows=rows,
             columns=columns,
-            sample_inner_fraction=0.65,
             cluster_distance_threshold=18.0,
             sample_pixel_counts=(100,) * (rows * columns),
             within_cell_spreads=(1.0,) * (rows * columns),

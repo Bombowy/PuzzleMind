@@ -16,7 +16,7 @@ def _validate_score(name: str, value: float) -> None:
 
 
 class CatsScreenState(StrEnum):
-    """Identify the puzzle and transition screens relevant to future automation."""
+    """Identify puzzle and transition screens used by Cats automation."""
 
     BOARD = "board"
     RANKING = "ranking"
@@ -26,7 +26,7 @@ class CatsScreenState(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class CatsScreenPoint:
-    """Describe one safe future action point in screenshot pixel coordinates."""
+    """Describe one safe action point in screenshot pixel coordinates."""
 
     x: int
     y: int

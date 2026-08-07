@@ -11,6 +11,8 @@ import pytest
 from scripts import autoplay_bluestacks_cats as autoplay
 from scripts import solve_bluestacks_cats as solve_script
 
+from logicforge.application.cats import autoplay as cats_autoplay
+from logicforge.application.cats.models import CatsSolveStatus
 from logicforge.automation.mouse import MouseButton, MouseController, ScreenPoint
 from logicforge.core import Board, BoardStateError
 from logicforge.infrastructure.opencv_cats_screen_state_detector import (
@@ -139,7 +141,6 @@ def _color_result(
         diagnostics=ColorDetectionDiagnostics(
             rows=4,
             columns=4,
-            sample_inner_fraction=0.65,
             cluster_distance_threshold=18.0,
             sample_pixel_counts=(100,) * 16,
             within_cell_spreads=(1.0,) * 16,
@@ -226,7 +227,6 @@ def _geometry_board_input(
         diagnostics=ColorDetectionDiagnostics(
             rows=rows,
             columns=columns,
-            sample_inner_fraction=0.65,
             cluster_distance_threshold=18.0,
             sample_pixel_counts=(100,) * (rows * columns),
             within_cell_spreads=(1.0,) * (rows * columns),
@@ -280,7 +280,6 @@ def _color_detection_error() -> ColorDetectionError:
         ColorDetectionDiagnostics(
             1,
             1,
-            0.5,
             18.0,
             (),
             (),
@@ -305,7 +304,7 @@ def _solved_board(
     board_input: solve_script.CatsBoardInput | None = None,
     *,
     window: WindowInfo | None = None,
-    status: str = "COMPLETE",
+    status: CatsSolveStatus = CatsSolveStatus.COMPLETE,
     cat_columns: tuple[int, ...] | None = None,
 ) -> solve_script.CatsSolvedBoard:
     """Create one actual mutable Board and immutable solved wrapper."""
@@ -313,7 +312,7 @@ def _solved_board(
     actual_input = board_input or _board_input()
     actual_window = window or _window()
     logical_board = Board(actual_input.color_result)
-    if status == "COMPLETE":
+    if status is CatsSolveStatus.COMPLETE:
         selected_cat_columns = cat_columns
         if selected_cat_columns is None:
             if actual_input.grid.rows == 9:
@@ -508,7 +507,10 @@ class FakeAnalyzer:
 class FakeSolver:
     """Solve each analyzed board into the requested terminal status."""
 
-    def __init__(self, statuses: tuple[str, ...] = ("COMPLETE",)) -> None:
+    def __init__(
+        self,
+        statuses: tuple[CatsSolveStatus, ...] = (CatsSolveStatus.COMPLETE,),
+    ) -> None:
         self.statuses = statuses
         self.calls: list[tuple[WindowInfo, solve_script.CatsBoardInput]] = []
 
@@ -554,7 +556,7 @@ def _runner(
     *,
     settings: autoplay.CatsAutoplaySettings | None = None,
     board_inputs: tuple[BoardAnalysisOutcome, ...] = (_board_input(),),
-    statuses: tuple[str, ...] = ("COMPLETE",),
+    statuses: tuple[CatsSolveStatus, ...] = (CatsSolveStatus.COMPLETE,),
     locator: FakeWindowLocator | None = None,
     mouse: FakeMouseController | None = None,
 ) -> tuple[
@@ -839,17 +841,16 @@ def test_generic_refined_9x9_reaches_guard_and_solver_without_autoplay_repair() 
 
 
 def test_autoplay_uses_shared_tile_grid_analysis_without_copying_cv_pipeline() -> None:
-    """Delegate board geometry to the reusable tile-grid-first solve analysis."""
+    """Share application analysis without any production scripts-to-scripts import."""
 
-    assert vars(autoplay)["analyze_captured_cats_board"] is (
-        solve_script.analyze_captured_cats_board
-    )
-    source = getsource(autoplay).casefold()
-    assert "opencvcatstilegriddetector" not in source
-    assert "opencvboarddetector" not in source
-    assert "opencvgriddetector" not in source
-    assert "solve_cats_exact" not in source
-    assert "logicforge.plugins.cats.exact_search" not in source
+    autoplay_source = getsource(autoplay).casefold()
+    solve_source = getsource(solve_script).casefold()
+    assert "from scripts." not in autoplay_source
+    assert "from scripts." not in solve_source
+    assert "analyze_cats_board_with_ports" in autoplay_source
+    assert "analyze_cats_board_with_ports" in solve_source
+    assert "solve_cats_exact" not in autoplay_source
+    assert "logicforge.plugins.cats.exact_search" not in autoplay_source
 
 
 @pytest.mark.parametrize(
@@ -1119,7 +1120,7 @@ def test_complete_validation_happens_before_first_cat_click(
             events.append("click")
             super().click(point, button)
 
-    monkeypatch.setattr(autoplay, "validate_complete_cats_solution", validate)
+    monkeypatch.setattr(cats_autoplay, "validate_complete_cats_solution", validate)
     runner, *_ = _runner(
         (_detection(CatsScreenState.BOARD),),
         mouse=EventMouse(),
@@ -1131,9 +1132,17 @@ def test_complete_validation_happens_before_first_cat_click(
     assert events[1] == "click"
 
 
-@pytest.mark.parametrize("status", ("STALLED", "UNSAT", "AMBIGUOUS", "SEARCH_LIMIT"))
+@pytest.mark.parametrize(
+    "status",
+    (
+        CatsSolveStatus.STALLED,
+        CatsSolveStatus.UNSAT,
+        CatsSolveStatus.AMBIGUOUS,
+        CatsSolveStatus.SEARCH_LIMIT,
+    ),
+)
 def test_unresolved_solver_status_raises_before_any_click_and_saves_one_overlay(
-    status: str,
+    status: CatsSolveStatus,
 ) -> None:
     """Stop every unresolved proof status without emitting a pointer action."""
 
@@ -1142,7 +1151,7 @@ def test_unresolved_solver_status_raises_before_any_click_and_saves_one_overlay(
         statuses=(status,),
     )
 
-    with pytest.raises(autoplay.CatsSolutionValidationError, match=status):
+    with pytest.raises(autoplay.CatsSolutionValidationError, match=status.value):
         runner.run()
     runner.save_failure_overlay()
     runner.save_failure_overlay()
@@ -1363,6 +1372,7 @@ def test_existing_cat_detection_contradiction_emits_zero_clicks() -> None:
         sleep_function=clock.sleep,
         monotonic_function=clock.monotonic,
         analyze_board=reject_analysis,
+        solve_board=FakeSolver(),
     )
 
     with pytest.raises(CatsExistingCatDetectionError):
@@ -1665,7 +1675,7 @@ def test_successful_session_does_not_save_failure_overlay() -> None:
         (
             ColorDetectionError(
                 "color",
-                ColorDetectionDiagnostics(1, 1, 0.5, 1.0, (), (), (), None, ("error",)),
+                ColorDetectionDiagnostics(1, 1, 1.0, (), (), (), None, ("error",)),
             ),
             5,
         ),
@@ -1824,7 +1834,7 @@ def test_cli_rejects_invalid_values(arguments: tuple[str, str]) -> None:
 def test_source_uses_only_accepted_screen_detection() -> None:
     """Forbid duplicated vision heuristics and unsafe external technologies."""
 
-    source = getsource(autoplay).casefold()
+    source = (getsource(autoplay) + getsource(cats_autoplay)).casefold()
     forbidden = (
         "cv2.inrange",
         "cv2.findcontours",

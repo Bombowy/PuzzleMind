@@ -1,4 +1,4 @@
-"""Cats-specific screenshot parsing boundary; no parsing logic exists yet."""
+"""Reserved generic parser boundary outside the active Cats analysis pipeline."""
 
 from logicforge.core.board import Board
 from logicforge.vision.parser import PuzzleParser
@@ -6,17 +6,13 @@ from logicforge.vision.screenshot import Screenshot
 
 
 class CatsParser(PuzzleParser):
-    """Translate Cats screenshots into one mutable board in a future release.
+    """Reserve the generic ``PuzzleParser`` adapter for a future unified API.
 
-    TODO: Compose calibrated board, grid, symbol, and color detectors in v0.5 and
-    copy their logical evidence into Board.cells without performing deductions.
+    Production Cats analysis is composed through backend-neutral detector ports in
+    ``logicforge.application.cats.analysis`` and does not use this scaffold.
     """
 
     def parse(self, screenshot: Screenshot) -> Board:
-        """Parse a Cats screenshot through future injected vision dependencies.
-
-        TODO: Implement Cats-specific observation mapping, confidence thresholds,
-        and actionable ambiguity diagnostics in v0.5.
-        """
+        """Reject use until the generic parser API is connected intentionally."""
 
         raise NotImplementedError

@@ -163,6 +163,19 @@ def test_settings_reject_non_finite_aspect_ratio() -> None:
         CatsScreenStateDetectionSettings(level_button_maximum_aspect_ratio=float("inf"))
 
 
+def test_warm_cta_setting_names_preserve_live_calibrated_values() -> None:
+    """Rename red/orange evidence without changing any calibrated threshold."""
+
+    settings = CatsScreenStateDetectionSettings()
+
+    assert settings.level_warm_cta_hue_minimum == 0
+    assert settings.level_warm_cta_hue_maximum == 28
+    assert settings.level_warm_cta_red_wrap_hue_minimum == 170
+    assert settings.level_warm_cta_saturation_minimum == 145
+    assert settings.level_warm_cta_value_minimum == 120
+    assert settings.level_button_minimum_warm_fill_ratio == 0.48
+
+
 @pytest.mark.parametrize(
     "overrides",
     (

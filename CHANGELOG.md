@@ -83,6 +83,10 @@ API reaches stability.
   classical OpenCV detector and renderer, and a zero-click diagnostic command.
 - Backend-neutral deterministic Cats exact search with immutable result/status
   diagnostics, singleton propagation, MRV branching, and a 250,000-node limit.
+- A dependency-injected `logicforge.application.cats` layer for board analysis,
+  solving, validation, click planning, terminal presentation, and autoplay policy.
+- Executable import-boundary tests covering scripts, application, Cats plugins,
+  core, CV detectors, and backend-neutral exact search.
 
 ### Changed
 
@@ -130,6 +134,14 @@ API reaches stability.
 - Give execute-mode Cats BOARD analysis a separate bounded 3-second stabilization
   window. Every retry captures a new poll frame; dry-run remains one-shot and the
   independent 20-second no-progress timeout remains unchanged.
+- Reduced both Cats scripts to CLI parsing, concrete dependency composition,
+  presentation, exit-code mapping, and `main()` without scripts-to-scripts imports.
+- Replaced arbitrary solve-status strings with `CatsSolveStatus` while retaining
+  the exact existing CLI values and meanings.
+- Shared the unchanged four-corner sample geometry between color detection and
+  debug rendering, removed the unused historical `sample_inner_fraction`, and
+  renamed orange-only CTA fields to red/orange warm-CTA terminology without
+  changing calibrated values.
 
 ### Fixed
 

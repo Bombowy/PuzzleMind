@@ -7,7 +7,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from logicforge.config.settings import ColorDetectionSettings
-from logicforge.infrastructure.opencv_color_detector import OpenCvColorDetector
+from logicforge.infrastructure.color_sampling_geometry import corner_sample_bounds
 from logicforge.vision.board_detector import BoardDetection
 from logicforge.vision.color_detector import ColorDetectionResult, LabColor
 from logicforge.vision.grid_detector import CellBounds, GridDetection
@@ -30,7 +30,7 @@ class OpenCvColorDetectionDebugRenderer:
     def __init__(self, settings: ColorDetectionSettings | None = None) -> None:
         """Share exact corner-patch geometry with the configured color detector."""
 
-        self._sampling_geometry = OpenCvColorDetector(settings)
+        self._settings = settings or ColorDetectionSettings()
 
     def render(
         self,
@@ -148,9 +148,7 @@ class OpenCvColorDetectionDebugRenderer:
     ) -> None:
         """Outline the exact TL, TR, BL, BR half-open color evidence regions."""
 
-        for left, top, right, bottom in self._sampling_geometry._corner_sample_bounds(
-            cell
-        ):
+        for left, top, right, bottom in corner_sample_bounds(cell, self._settings):
             cv2.rectangle(
                 overlay,
                 (left, top),

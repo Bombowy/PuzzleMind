@@ -1,6 +1,7 @@
 """Deterministic tests for puzzle-neutral LAB cell-color classification."""
 
 from datetime import UTC, datetime
+from inspect import getsource
 from math import dist
 from pathlib import Path
 
@@ -9,6 +10,7 @@ import numpy as np
 import pytest
 
 from logicforge.config.settings import ColorDetectionSettings
+from logicforge.infrastructure.color_sampling_geometry import corner_sample_bounds
 from logicforge.infrastructure.opencv_cats_tile_grid_detector import (
     OpenCvCatsTileGridDetector,
 )
@@ -289,7 +291,9 @@ def test_one_contaminated_corner_is_rejected_before_final_median() -> None:
     detector = OpenCvColorDetector()
     clean_result = detector.detect(screenshot, grid)
     image = screenshot.image.copy()
-    left, top, right, bottom = detector._corner_sample_bounds(grid.cells[0])[0]
+    left, top, right, bottom = corner_sample_bounds(
+        grid.cells[0], ColorDetectionSettings()
+    )[0]
     image[top:bottom, left:right] = PALETTE[1]
     contaminated = Screenshot(
         image,
@@ -319,7 +323,7 @@ def test_two_strongly_contaminated_corners_fail_closed() -> None:
     screenshot, _, grid = _colored_grid(((0,),), palette=PALETTE)
     detector = OpenCvColorDetector()
     image = screenshot.image.copy()
-    bounds = detector._corner_sample_bounds(grid.cells[0])
+    bounds = corner_sample_bounds(grid.cells[0], ColorDetectionSettings())
     for index in (0, 3):
         left, top, right, bottom = bounds[index]
         image[top:bottom, left:right] = PALETTE[1]
@@ -341,11 +345,10 @@ def test_corner_patch_geometry_avoids_rounded_gaps_and_cell_edges() -> None:
 
     fixture = synthetic_cats_tile_grid(rows=5, columns=5, include_ui=False)
     tile_grid = OpenCvCatsTileGridDetector().detect(fixture.screenshot)
-    detector = OpenCvColorDetector()
     cell = tile_grid.grid.cells[0]
     expected_color = CATS_TILE_PALETTE[fixture.color_indices[0][0]]
 
-    bounds = detector._corner_sample_bounds(cell)
+    bounds = corner_sample_bounds(cell, ColorDetectionSettings())
 
     assert len(bounds) == 4
     for left, top, right, bottom in bounds:
@@ -364,7 +367,7 @@ def test_corner_patch_bounds_are_positive_for_small_and_rectangular_cells(
 
     cell = CellBounds(0, 0, 11, 13, width, height, 11 + width // 2, 13 + height // 2)
 
-    bounds = OpenCvColorDetector()._corner_sample_bounds(cell)
+    bounds = corner_sample_bounds(cell, ColorDetectionSettings())
 
     assert len(bounds) == 4
     assert all(
@@ -379,7 +382,7 @@ def test_default_59_pixel_cell_uses_seven_pixel_patches_at_six_pixel_offset() ->
 
     cell = CellBounds(0, 0, 100, 200, 59, 59, 129, 229)
 
-    assert OpenCvColorDetector()._corner_sample_bounds(cell) == (
+    assert corner_sample_bounds(cell, ColorDetectionSettings()) == (
         (106, 206, 113, 213),
         (146, 206, 153, 213),
         (106, 246, 113, 253),
@@ -493,8 +496,6 @@ def test_invalid_color_settings_fail_at_composition_time() -> None:
     """Reject unsafe sampling, clustering, and confidence settings immediately."""
 
     with pytest.raises(ValueError):
-        ColorDetectionSettings(sample_inner_fraction=0.0)
-    with pytest.raises(ValueError):
         ColorDetectionSettings(outlier_trim_fraction=0.5)
     with pytest.raises(ValueError):
         ColorDetectionSettings(cluster_distance_threshold=0.0)
@@ -597,6 +598,15 @@ def test_renderer_can_draw_exact_corner_sample_regions() -> None:
 
     assert not np.array_equal(diagnostic, ordinary)
     assert np.array_equal(screenshot.image, before)
+
+
+def test_renderer_uses_shared_corner_geometry_without_detector_private_api() -> None:
+    """Keep debug rendering coupled only to the shared pure geometry function."""
+
+    source = getsource(OpenCvColorDetectionDebugRenderer)
+
+    assert "corner_sample_bounds" in source
+    assert "._corner_sample_bounds" not in source
 
 
 def test_renderer_rejects_mismatched_grid_and_result() -> None:

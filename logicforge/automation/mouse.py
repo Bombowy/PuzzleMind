@@ -1,4 +1,4 @@
-"""Port for future pointer-based gameplay automation."""
+"""Port for dependency-injected pointer-based gameplay automation."""
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -19,11 +19,7 @@ class MouseButton(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class ScreenPoint:
-    """Identify an absolute screen position in physical pixel coordinates.
-
-    TODO: Add display identity and scaling metadata before v0.7 so multi-monitor
-    automation can validate coordinate systems and DPI transformations safely.
-    """
+    """Identify an absolute physical-pixel position on the virtual desktop."""
 
     x: int
     y: int
@@ -38,10 +34,6 @@ class MouseController(ABC):
 
     @abstractmethod
     def click(self, point: ScreenPoint, button: MouseButton = MouseButton.LEFT) -> None:
-        """Perform one validated click at an absolute screen point.
-
-        TODO: Implement platform adapters, dry-run support, focus verification,
-        rate limiting, and fail-safe abort behavior for the v0.7 milestone.
-        """
+        """Perform one adapter-validated click at an absolute screen point."""
 
         raise NotImplementedError
