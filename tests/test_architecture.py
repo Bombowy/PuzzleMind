@@ -7,12 +7,14 @@ from pathlib import Path
 from pkgutil import walk_packages
 
 import logicforge
-from logicforge.automation.keyboard import KeyboardController
 from logicforge.automation.mouse import MouseController
-from logicforge.plugins.base import PuzzlePlugin
-from logicforge.rules.rule_engine import RuleEngine
-from logicforge.solver.deduction_solver import DeductionSolver
-from logicforge.vision.parser import PuzzleParser
+from logicforge.plugins.cats import (
+    CatsExistingCatDetector,
+    CatsScreenStateDetector,
+    CatsTileGridDetector,
+)
+from logicforge.vision import BoardDetector, ColorDetector, GridDetector
+from logicforge.vision.window_capture import WindowCapturer, WindowLocator
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -45,23 +47,26 @@ def test_every_package_module_imports_without_optional_infrastructure() -> None:
         import_module(module.name)
 
 
-def test_primary_boundary_types_remain_abstract() -> None:
-    """Keep ports distinct from the concrete adapters composed by CLI scripts."""
+def test_active_runtime_ports_remain_abstract() -> None:
+    """Keep only ports backed by real adapters and runtime consumers."""
 
-    boundary_types = (
-        KeyboardController,
+    active_ports = (
+        BoardDetector,
+        GridDetector,
+        ColorDetector,
+        CatsTileGridDetector,
+        CatsExistingCatDetector,
+        CatsScreenStateDetector,
+        WindowLocator,
+        WindowCapturer,
         MouseController,
-        PuzzlePlugin,
-        RuleEngine,
-        DeductionSolver,
-        PuzzleParser,
     )
 
-    assert all(isabstract(boundary_type) for boundary_type in boundary_types)
+    assert all(isabstract(port) for port in active_ports)
 
 
-def test_package_version_matches_architecture_milestone() -> None:
-    """Keep runtime package metadata aligned with the documented v0.1 milestone."""
+def test_package_version_matches_current_release() -> None:
+    """Keep runtime package metadata aligned with the current pre-1.0 release."""
 
     assert logicforge.__version__ == "0.1.0"
 
@@ -126,6 +131,16 @@ def test_cv_detectors_do_not_import_solve_or_autoplay_policy() -> None:
     assert all(
         not module.startswith("logicforge.application.cats")
         for path in detector_paths
+        for module in _imports(path)
+    )
+
+
+def test_screen_state_internals_do_not_import_application_policy() -> None:
+    """Keep the extracted OpenCV feature family below application policy."""
+
+    assert all(
+        not module.startswith("logicforge.application.cats")
+        for path in _python_files("logicforge/infrastructure/cats_screen_state")
         for module in _imports(path)
     )
 

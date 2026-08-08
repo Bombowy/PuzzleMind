@@ -1,4 +1,4 @@
-"""Public package metadata for the LogicForge framework."""
+"""Public package metadata for LogicForge."""
 
 __all__ = ["__version__"]
 

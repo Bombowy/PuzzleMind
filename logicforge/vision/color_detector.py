@@ -96,8 +96,8 @@ class ColorDetectionResult:
     """Return complete row-major color equality classes for a detected grid.
 
     ``color_matrix`` has exactly ``rows`` rows and ``columns`` entries per row.
-    It repeats the logical identifiers from ``observations`` to offer future
-    parsers a direct immutable board-shaped input without reconstructing geometry.
+    It repeats the logical identifiers from ``observations`` so consumers receive
+    a direct immutable board-shaped input without reconstructing geometry.
     """
 
     observations: tuple[ColorObservation, ...]

@@ -131,7 +131,7 @@ def _draw_ranking_cards(
 
 
 def _draw_level_button(image: NDArray[np.uint8]) -> tuple[int, int, int, int]:
-    """Draw a rounded orange button occupying about 70% of viewport width."""
+    """Draw an orange warm-CTA button occupying about 70% of viewport width."""
 
     height, width = image.shape[:2]
     button_width = round(width * 0.70)

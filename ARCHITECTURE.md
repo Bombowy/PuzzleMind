@@ -1,432 +1,314 @@
 # LogicForge Architecture
 
-## Purpose
+## Scope
 
-LogicForge separates screenshot interpretation, puzzle semantics, deduction,
-presentation, and operating-system side effects. The architecture is designed to
-support many puzzle families without turning the core solver into a collection of
-game-specific conditions.
+LogicForge currently implements one complete vertical slice: detecting, solving,
+validating, and optionally playing Cats boards from a live BlueStacks window on
+Windows. The architecture reflects that working system. It does not introduce a
+generic service, registry, rule engine, or parser until another real puzzle proves
+that such an abstraction is needed.
 
-The codebase currently implements in-memory BlueStacks capture, rectangular board
-localization, public grid/cell geometry, and puzzle-neutral LAB color classes.
-Symbol interpretation, puzzle parsing, rules, solving, and automation remain
-deliberately deferred to later milestones.
+The principal design goals are deterministic results, explicit mutable state,
+backend-neutral puzzle policy, typed failure boundaries, and fail-closed desktop
+automation.
 
-## Architectural principles
+## Layers and dependency rule
 
-LogicForge applies Clean Architecture and SOLID principles:
+### 1. Core
 
-- **Dependency rule:** dependencies point toward stable, puzzle-neutral policies.
-- **Single responsibility:** detection, parsing, deduction, propagation,
-  explanation, rendering, and automation have separate contracts.
-- **Open/closed design:** new plugins and adapters extend behavior without editing
-  core entities or orchestration interfaces.
-- **Substitutability:** implementations honor small typed ports with deterministic
-  inputs and outputs.
-- **Interface segregation:** consumers depend on narrow detector, renderer, I/O,
-  and automation boundaries rather than a shared service object.
-- **Dependency inversion:** use cases consume abstractions; application composition
-  will inject OpenCV, Pillow, desktop automation, and storage implementations.
+`logicforge.core` contains the small puzzle-neutral logical model:
 
-The domain packages do not import infrastructure packages. Plugins may depend on
-core and public rule/vision contracts, but not on concrete adapters.
+- `Board`
+- `BoardStateError`
 
-## Package responsibilities
+The core knows nothing about Cats, OpenCV, Windows, application orchestration, or
+mouse automation.
 
-| Package | Responsibility | Must not contain |
-| --- | --- | --- |
-| `core` | Single mutable solver board and puzzle-neutral values | CV algorithms, I/O, plugin rules |
-| `vision` | Screenshot models and detector/parser ports | Deduction logic, mouse actions |
-| `rules` | Stateless rule contracts and engine boundary | Puzzle-specific branching, mutation |
-| `solver` | Deduction use-case and state-transition boundaries | Image processing, UI code |
-| `plugins` | Puzzle-specific parsing and rule composition | Core-framework special cases |
-| `explain` | Semantic explanations and formatting ports | Rule execution, board mutation |
-| `visualization` | Board and diagnostic rendering ports | Persistence decisions |
-| `automation` | Explicit OS input boundaries | Deduction policy |
-| `io` | Image loading and artifact export ports | Puzzle interpretation |
-| `config` | Immutable application settings | Environment reads in domain code |
-| `utils` | Narrow logging and timing ports | Puzzle behavior |
+### 2. Backend-neutral ports and transport models
 
-## Overall architecture
+`logicforge.vision` owns immutable screenshot, window, board, grid, cell, and color
+transport models plus the active detector and capture ports. `logicforge.automation`
+owns the active `MouseController` port and virtual-desktop coordinates.
+
+These modules describe inputs, outputs, invariants, and typed errors. They do not
+contain concrete OpenCV, MSS, pywin32, or Win32 input code.
+
+### 3. Cats plugin logic and contracts
+
+`logicforge.plugins.cats` owns:
+
+- Cats board mutations (`place_cat`, `block_cell`);
+- seven deterministic deduction rules and their fixed-point loop;
+- deterministic exact constraint search;
+- tile-lattice result and detector contracts;
+- existing-cat result and detector contracts;
+- screen-state result and detector contracts.
+
+The plugin imports core and backend-neutral ports, but never imports application
+or infrastructure code.
+
+### 4. Cats application orchestration
+
+`logicforge.application.cats` composes use cases over injected ports:
+
+- `analysis` builds `CatsBoardInput` from one screenshot;
+- `solving` initializes and solves one logical board;
+- `validation` enforces captured geometry and complete-solution invariants;
+- `click_plan` maps new cats to desktop targets and executes through a mouse port;
+- `autoplay` owns the polling and transition state machine;
+- `models` and `presentation` carry typed results and CLI-facing formatting.
+
+Application policy does not import concrete infrastructure.
+
+### 5. Infrastructure adapters
+
+`logicforge.infrastructure` implements the outward-facing details:
+
+- classical OpenCV detectors and debug renderers;
+- MSS window capture;
+- pywin32 BlueStacks window lookup;
+- Win32 mouse input.
+
+Adapters may depend on ports and plugin contracts. They do not own solving,
+validation, click-planning, or autoplay policy.
+
+### 6. Composition roots
+
+`scripts/solve_bluestacks_cats.py` and
+`scripts/autoplay_bluestacks_cats.py` select concrete OpenCV and Windows adapters,
+parse CLI arguments, map exit codes, and print results. Scripts do not import one
+another and contain no reusable application policy.
+
+## Dependency graph
 
 ```mermaid
 flowchart TB
-    subgraph Infrastructure["Infrastructure boundary"]
-        Files["File adapters"]
-        CV["CV adapters"]
-        UI["Automation adapters"]
-        Renderers["Rendering adapters"]
-    end
+    Scripts["scripts/<br/>CLI composition roots"]
+    Application["logicforge.application.cats<br/>use-case policy"]
+    Cats["logicforge.plugins.cats<br/>rules, exact search, Cats contracts"]
+    Core["logicforge.core<br/>Board"]
+    Vision["logicforge.vision<br/>ports and immutable transport"]
+    Automation["logicforge.automation<br/>MouseController port"]
+    Infrastructure["logicforge.infrastructure<br/>OpenCV / MSS / pywin32 / Win32"]
 
-    subgraph Application["Application policies"]
-        Vision["Vision ports"]
-        Solver["Solver use case"]
-        Engine["Rule Engine port"]
-        Explain["Explainability"]
-    end
-
-    subgraph Domain["Domain core"]
-        Board["Mutable Board cells"]
-        Values["Coordinates / Candidate / Enums"]
-    end
-
-    subgraph Extensions["Puzzle extensions"]
-        Cats["Cats plugin"]
-        Future["Future plugins"]
-    end
-
-    Files --> Vision
-    CV --> Vision
-    Vision --> Board
+    Scripts --> Application
+    Scripts --> Infrastructure
+    Application --> Cats
+    Application --> Core
+    Application --> Vision
+    Application --> Automation
+    Cats --> Core
     Cats --> Vision
-    Future --> Vision
-    Cats --> Engine
-    Future --> Engine
-    Engine --> Solver
-    Board --> Solver
-    Solver --> Explain
-    Solver --> Renderers
-    Solver -. explicit command .-> UI
-    Application --> Domain
-    Extensions --> Domain
+    Infrastructure --> Cats
+    Infrastructure --> Vision
+    Infrastructure --> Automation
 ```
 
-## Data flow
+Enforced boundaries include:
 
-The planned end-to-end flow is a sequence of typed transformations:
+- core does not import application, infrastructure, or plugins;
+- Cats application policy does not import infrastructure;
+- Cats plugin logic does not import application;
+- OpenCV detectors do not import solve or autoplay policy;
+- exact search imports no OpenCV, NumPy, Win32, or application modules;
+- production scripts do not import other scripts.
 
-1. A capture or I/O adapter creates an immutable in-memory BGR `Screenshot`.
-2. A plugin parser coordinates board, grid, color, and later symbol detectors.
-3. `Board(ColorDetectionResult)` copies `color_matrix` once into the sole mutable
-   `cells: list[list[str]]` solver representation.
-4. The solver supplies that same board and ordered plugin rules to the Rule Engine.
-5. Rules return proposed `RuleOutcome` records; validated outcomes are applied to
-   the same matrix through `set_cat` and `set_blocked`.
-6. No immutable board, parallel state matrix, region map, or per-change board copy
-   is created.
-7. Outcomes may later become semantic `Explanation` records with provenance.
-8. Renderers present the current board. Automation receives only explicit,
-   separately authorized commands derived from a validated state.
+## Runtime data flow
 
-No stage may communicate by hidden global state. Failed or ambiguous input will
-eventually use typed diagnostics rather than partial mutation or log-only errors.
+The application moves through typed data rather than shared global state:
 
-## Rule Engine
-
-A rule is a stateless policy object with an identifier, description, and one
-evaluation operation. Its input is an immutable `RuleContext`; its output is zero
-or more proposed outcomes.
-
-The v0.4 engine will be responsible for deterministic ordering, failure isolation,
-proposal validation, duplicate handling, conflict detection, and trace capture.
-Rules will not apply their own changes. This division keeps each rule independently
-testable and gives propagation one authoritative place to enforce invariants.
-
-Puzzle-specific rules live only in plugin packages. Generic engine code must never
-branch on a plugin identifier or inspect opaque plugin metadata.
-
-## Vision module
-
-The vision layer uses small ports for independent stages. `BoardDetector` locates
-the board, `GridDetector` recovers geometry, and `ColorDetector` produces normalized
-observations. `PuzzleParser` is the high-level plugin boundary that interprets
-those observations as domain entities.
-
-The public `Screenshot` owns a contiguous, read-only `numpy.ndarray` with an
-explicit `uint8` BGR contract. MSS converts native BGRA frames directly into this
-model; no component reloads an encoded file.
-
-`BoardDetector` is the inward-facing port. `OpenCvBoardDetector` is an
-infrastructure adapter that converts the BGR image to grayscale, applies Gaussian
-blur, combines Canny and Otsu-derived masks with morphological closing, extracts
-contours, and evaluates rectangular bounding boxes. A scale-relative dilated edge
-envelope joins the small visual gaps between adjacent board tiles without parsing
-cells. Typed relative thresholds filter title-bar, border, side-toolbar,
-advertisement-like, button-sized, and
-geometrically implausible candidates without fixing coordinates to one resolution.
-
-Geometry-valid candidates then receive private ROI-level regular-grid validation.
-CLAHE normalization, adaptive-threshold edges, Canny edges,
-directional morphological opening, and axis projection profiles identify long
-horizontal and vertical responses. Nearby responses are clustered by a relative
-ROI distance so thick separators count once. Candidate-border responses are
-removed, then logical outer boundaries are combined with the ordered internal
-positions to estimate rows, columns, spacing variation, and line coverage.
-
-The geometry subscore is:
-
-```text
-geometry =
-    0.25 * area plausibility
-  + 0.25 * rectangularity
-  + 0.20 * aspect-ratio plausibility
-  + 0.15 * edge-density plausibility
-  + 0.15 * expected-location proximity
+```mermaid
+flowchart LR
+    WI[WindowInfo] --> SS[Screenshot]
+    SS --> TG[CatsTileGridDetection]
+    TG --> CD[ColorDetectionResult]
+    CD --> EC[CatsExistingCatDetection]
+    EC --> BI[CatsBoardInput]
+    BI --> B[Mutable Board]
+    B --> RL[Rules fixed point]
+    RL --> ES[Optional CatsExactSearchResult]
+    ES --> SB[CatsSolvedBoard]
+    SB --> V[Complete solution validation]
+    V --> CP[tuple CatClickTarget]
+    CP --> MC[MouseController]
 ```
 
-Grid evidence is:
+The concrete steps are:
 
-```text
-grid =
-    0.25 * boundary-count adequacy
-  + 0.35 * spacing regularity
-  + 0.40 * line coverage
+1. A `WindowLocator` returns `WindowInfo`; a `WindowCapturer` creates one immutable
+   `Screenshot` whose BGR pixels are owned and read-only.
+2. Cats tile-grid analysis returns both `BoardDetection` and full row-major
+   `GridDetection`, including `CellBounds` for supported missing tile slots.
+3. `ColorDetector` returns immutable original color equality classes.
+4. `CatsExistingCatDetector` inspects only cell-local ROIs and returns immutable
+   existing-cat evidence.
+5. These results form one frozen `CatsBoardInput`.
+6. Solving creates exactly one mutable `Board`, applies existing cats, runs the
+   rule loop, and optionally runs exact search.
+7. `CatsSolvedBoard` retains the original evidence, final board, status, rule
+   count, optional search diagnostics, and click plan.
+8. Full validation rechecks every final cat, not merely newly clicked cats.
+9. `CatClickTarget` records logical, screenshot, and virtual-desktop coordinates.
+10. The injected `MouseController` executes targets only after the autoplay guards
+    accept the current window and captured-board fingerprint.
 
-final confidence = 0.40 * geometry + 0.60 * grid
-```
+## Immutable and mutable boundaries
 
-Horizontal and vertical values are averaged within each grid component. Spacing
-regularity is `clamp(1 - coefficient_of_variation / configured_maximum)`. Boundary
-adequacy reaches one at the configured minimum. Coverage is the mean peak
-projection response of de-duplicated internal lines. Every component and final
-score is clamped to `[0.0, 1.0]`.
+Vision and search results are frozen records. Diagnostic contracts expose tuples,
+numbers, strings, and other backend-neutral values; OpenCV matrices and contours
+do not cross into plugin or application APIs.
 
-Confidence cannot override validation. A candidate is rejected if either axis has
-fewer than four boundaries, fewer than three estimated cells, excessive spacing
-variation, insufficient coverage, or if aggregate grid evidence is below its
-threshold. This fail-closed rule prevents advertisements and UI cards from passing
-on geometry alone. Total ordering by confidence, area, position, and size resolves
-ties reproducibly. Diagnostics contain only primitive measurements, normalized
-line-position tuples, and rejection reasons; no contours or OpenCV types cross the
-infrastructure boundary.
+`Board` is deliberately mutable and contains the only logical state matrix used
+by rules:
 
-The public `OpenCvGridDetector` reuses that exact analyzer and mandatory validation
-path; it does not run a second line detector. It validates the supplied
-`BoardDetection`, crops only that board ROI, converts normalized boundaries into
-full-screenshot integers using deterministic round-half-up, and rejects any
-duplicate or reversed pixel result. Outer lines are fixed exactly to the board's
-half-open bounds.
+- `C<n>` — unresolved cell with original color class `n`;
+- `K` — confirmed cat;
+- `X` — blocked cell.
 
-`GridDetection` contains every horizontal and vertical boundary, derived row and
-column counts, row-major immutable `CellBounds`, and the grid-evidence confidence.
-Coordinates are screenshot-relative. A cell includes its top-left pixel and excludes
-`x + width` and `y + height`, so consecutive cells tile the complete board without
-gaps or overlap. Grid confidence intentionally excludes board confidence. Typed
-`GridDetectionError` diagnostics preserve normalized positions, converted lines,
-spacing, coverage, score, and rejection reasons without exposing matrices.
+`Board(ColorDetectionResult)` copies the immutable color matrix once. Cats actions
+then mutate that matrix through validated methods. `K` and `X` are terminal;
+contradictory transitions raise `BoardStateError` before mutation.
 
-OpenCV debug rendering is a separate infrastructure concern. It copies the
-immutable source pixels and may draw selected/rejected candidates, de-duplicated
-horizontal and vertical lines, estimated dimensions, coverage, and grid score.
-Persistence occurs only through an explicit `debug=True` call, so ordinary
-detection has no filesystem side effects.
+Placing a cat replaces its `C<n>` value with `K`, so original color cannot be
+reconstructed from the final board. `ColorDetectionResult.color_matrix` therefore
+remains authoritative for existing cats, exact-search color constraints, and final
+one-cat-per-original-color validation.
 
-The grid renderer separately draws the public board boundary, all public lines,
-cell centers, and optional row/column labels. Its normal and rejected overlays are
-also explicit debug-only persistence paths.
+## Computer vision
 
-`OpenCvColorDetector` consumes only the immutable screenshot and public grid. It
-crops four scale-relative inset corner patches from every half-open cell, avoiding
-both tile edges and the symbol-prone center. Each patch is converted to OpenCV's
-8-bit LAB representation and passed through the existing median/farthest-pixel
-trim estimator. A channel-wise corner median identifies exactly one farthest
-patch; the final representative is the channel-wise median of the other three.
-At least three corner patches must form a complete-link-compatible consensus at
-the unchanged LAB threshold. This estimates the background without recognizing
-central symbols, cats, X marks, highlights, or animation sprites.
+### Capture and generic geometry
 
-Cell representatives are grouped with deterministic complete-link agglomeration:
-two clusters merge only when every cross-cluster LAB distance is within the typed
-threshold. This prevents transitive chains from joining endpoints that are not
-actually similar. Final centroids are sorted lexicographically by LAB value and
-receive contiguous logical identifiers `C0..Cn`. The IDs encode equality only and
-do not name colors.
+The Windows adapter captures only a validated BlueStacks window rectangle. The
+generic contour-first board and grid detectors remain useful for diagnostics and
+as a typed fallback when Cats tile-lattice analysis fails. Coordinates are
+screenshot-relative and cells use half-open bounds.
 
-Per-cell confidence is deterministic:
+### Cats tile lattice
 
-```text
-homogeneity = clamp(1 - robust_spread / maximum_within_cell_spread)
-cluster_fit = clamp(1 - distance_to_centroid / cluster_distance_threshold)
-cell confidence = 0.70 * homogeneity + 0.30 * cluster_fit
-global confidence = arithmetic mean of all cell confidences
-```
+The primary Cats geometry adapter detects colored tile components and fits regular
+column and row center runs independently. Each fitted axis requires repeated real
+support in the orthogonal direction. Cartesian assignment happens only after both
+maximal supported runs are chosen.
 
-Public immutable results contain row-major `ColorObservation` records, the direct
-matrix of logical IDs, class count, global confidence, LAB representatives, and
-primitive diagnostics. OpenCV arrays remain inside infrastructure. A separate
-renderer labels every cell and may persist an overlay only with explicit debug
-behavior. No color stage imports puzzle plugins, solver code, or automation.
+This permits an occupied cell to have no normal tile component while retaining its
+`CellBounds`: its row and column still have real support from other components.
+Unsupported outer rows or columns are never freely extrapolated. Candidate
+ordering prefers larger supported lattices before occupancy, so a full board with
+one missing occupied slot can beat a smaller perfect inner subgrid.
 
-The domain `Board` is intentionally different from immutable vision transport.
-Its constructor copies `ColorDetectionResult.color_matrix` into nested lists once.
-Thereafter `C<n>`, `K`, and `X` coexist in that single mutable matrix, and all
-solver-facing queries and assignments operate on it directly. `Board` contains no
-`Cell` objects, `Region` objects, snapshot conversion, or second state matrix.
-Unresolved `C<n>` entries may transition once to either `K` or `X`. Both final
-states accept an identical idempotent assignment but reject the opposite state
-with `BoardStateError`; validation occurs before assignment, so a conflict cannot
-partially mutate the board.
+### Color classification
 
-Cats-specific direct consequences live in `plugins.cats.board_actions`, outside
-the puzzle-neutral `Board`. `place_cat()` captures the target color before setting
-`K`, computes the deterministic union of same-color, row, column, and eight-neighbor
-coordinates, and validates every planned `X` before the first mutation. Only after
-that validation does it call `Board.set_cat()` and `Board.set_blocked()`. Existing
-`X` values are preserved; any planned `K` or invalid value rejects the whole plan.
-This plan-then-apply structure provides atomicity without a rollback copy. The
-separate `block_cell()` action delegates one idempotent exclusion to `Board` and
-does not propagate. These are operations for future rules, not rule classes or a
-solver engine.
+The color adapter samples four scale-relative inset corner patches per cell. It
+uses robust OpenCV LAB representatives, rejects one corner-level outlier, requires
+corner consensus, and performs deterministic complete-link clustering. Logical
+IDs such as `C0` express equality only. Central sprites and X marks are not
+recognized by the color stage and are deliberately excluded from its evidence.
 
-## Cats tile-grid-first vision
+### Existing cats
 
-Cats board geometry does not depend on a single outer board contour. The plugin
-contract `CatsTileGridDetector` returns one immutable pair of existing
-`BoardDetection` and `GridDetection` results plus primitive diagnostics. Its
-OpenCV adapter starts with individual colored components rather than a board-sized
-contour: an HSV-saturation-or-LAB-chroma mask is cleaned by a small scale-relative
-kernel, then similarly sized near-square components are grouped into families.
+Existing-cat detection operates only inside each public `CellBounds` and compares
+a central ROI against that cell's already-computed LAB background. Scale-relative
+morphology and connected-component geometry measure coherent foreground area,
+width, height, and centrality. Thin X marks fail hard area conditions. Accepted
+detections must satisfy Cats row, column, original-color, and non-touching
+invariants before logical mutation.
 
-For each stable family, component centers are clustered independently on X and Y.
-Clusters need repeated support in the orthogonal dimension, which excludes
-isolated advertisement and UI components before pitch fitting. The maximal
-regular center run is selected independently on each axis before Cartesian slot
-assignment. Every fitted row and column then receives a real-component count and
-a normalized support ratio against the opposite fitted dimension. A missing
-intersection is allowed only inside those supported axes while pitch CV, slot
-residual, occupancy, bounds, and score all pass. No empty outer row or column is
-extrapolated. Candidate ordering starts with supported lattice area, then minimum
-axis support, real component count, occupancy, score, combined pitch CV, residual,
-and deterministic position. Confidence combines tile-size consistency,
-row-pitch regularity, column-pitch regularity, occupancy, and slot residual
-quality. It has no square, expected-dimension, palette, color-count, OCR,
-template, or Cats-rule term.
+### Screen state
 
-Internal cell boundaries are midpoints of adjacent fitted centers. Outer bounds
-are extrapolated by half the median pitch, so public cells include the narrow gaps
-around rounded tile interiors. `CellBounds` tile the complete board without gaps
-or overlap and retain fitted tile centers. This geometry is passed directly to the
-existing puzzle-neutral `OpenCvColorDetector`; it is not re-detected by
-`OpenCvGridDetector`.
+The screen-state adapter classifies `BOARD`, `RANKING`, `LEVEL_COMPLETE`, or
+`UNKNOWN` using classical, viewport-relative evidence. Warm red/orange CTA geometry
+and ranking-card layout are interpreted without OCR or template matching. Detailed
+implementation is grouped behind one public OpenCV facade into focused viewport,
+level-complete, ranking, and tile-grid-first board-fallback modules. Consumers keep
+using the single `OpenCvCatsScreenStateDetector` adapter.
+Detailed calibration remains in typed settings and detector source rather than this
+document.
 
-Cats screen-state BOARD classification and reusable solve analysis use this
-combined detector first. A typed failure may fall back to the retained generic
-contour-first `OpenCvBoardDetector` and `OpenCvGridDetector`, which remain the
-generic path for other puzzles and diagnostics. Autoplay consumes only the shared
-analysis function, and its final `rows == columns == color_count` guard remains a
-separate fail-closed Cats invariant.
+## Cats solving
 
-## Cats existing-cat awareness
+### Atomic board actions
 
-`CatsExistingCatDetector` is a backend-neutral plugin port over `Screenshot`,
-`GridDetection`, and `ColorDetectionResult`. The OpenCV adapter never searches
-outside public `CellBounds`, so avatars, counters, power-ups, advertisements, and
-BlueStacks chrome are outside its input domain. Each cell supplies a central ROI
-inset by 8% horizontally and 6% vertically. Its existing corner-safe
-`representative_lab` is the background reference; the global complete-link color
-threshold remains 18 and is not reused for occupancy.
+`place_cat()` validates the complete same-color, row, column, and eight-neighbor
+exclusion plan before the first write, then applies changes through `Board`.
+`block_cell()` performs one idempotent exclusion. Rules do not perform I/O and do
+not write `board.cells` directly.
 
-Pixels at LAB distance 32 or greater form Cats foreground. A 3.5%-of-shorter-cell
-elliptical OPEN/CLOSE kernel removes scale-relative noise. Connected-component
-evidence records foreground area, largest coherent area, width and height
-coverage, and normalized component-center offset. Hard acceptance requires at
-least 0.26 foreground, 0.24 largest component, 0.38 width, 0.38 height, at most
-0.18 center offset, and score at least 0.40. The score is 25% foreground + 25%
-largest component + 20% width + 20% height + 10% centrality. Thin black or white
-X marks can span a wide bounding box but fail the area gates.
+### Seven-rule fixed point
 
-Accepted evidence is checked before logical mutation: existing cats must be
-unique by row, column, and immutable original color and may not touch in eight
-directions. Contradictory image evidence raises a typed error without choosing a
-winner. Solve composition creates one `Board`, applies existing cats in row-major
-order through `place_cat()`, and only then runs unchanged Cats rules. Final
-validation still covers every K and requires the full row/column/color/non-touch
-solution. The click plan is exactly final K minus validated existing coordinates,
-so counters and double-click execution cover only newly placed cats.
+The exact production order is:
 
-## Cats deterministic exact-search fallback
+1. `SingleRemainingColorCellRule`
+2. `SingleRemainingLineCellRule`
+3. `MonochromaticLineColorExclusionRule`
+4. `ColorSubsetConfinedToLinesRule`
+5. `AdjacentColorPairExclusionRule`
+6. `ColorConfinedToLineRule`
+7. `ImpossibleCatCandidateRule`
 
-The seven ordered Cats rules remain the preferred deduction mechanism. Exact
-search is called only when their fixed-point loop leaves `C<n>` cells. It consumes
-the current `Board` plus the immutable `ColorDetectionResult.color_matrix`, which
-is authoritative for the original color under both newly deduced and pre-existing
-`K` cells.
+After any successful `apply(Board) -> bool`, evaluation restarts from rule one.
+The loop ends when a complete pass makes no mutation.
 
-Branching never mutates or clones `Board`. A lightweight immutable state retains
-candidate coordinates, selected cats, and used rows, columns, and original
-colors. Every assignment removes candidates in its row, column, color, and eight
-neighbor area. Color, row, and column singleton constraints propagate to a fixed
-point before branching and after every hypothetical assignment. Contradictory
-zero-candidate groups close the branch.
+### Exact-search fallback
 
-MRV considers unresolved color groups, then rows, then columns. Ordering is
-candidate count, group type, numeric color suffix or line index, and row-major
-coordinates; branch coordinates are also row-major. The traversal is therefore
-independent of hash/set iteration and random state. Search retains the first
-solution and continues until the tree is exhausted or a second distinct solution
-is found. Its public statuses are `UNIQUE`, `UNSAT`, `AMBIGUOUS`, and
-`LIMIT_REACHED`; a deterministic 250,000-node default replaces a wall-clock
-timeout.
+Search runs only when rules stall. It validates the current board against the
+immutable original color matrix, treats current cats as fixed, and explores a
+lightweight constraint state without mutating or cloning the real board.
 
-Only `UNIQUE` is applied to the same logical Board, after validating the complete
-row/column/color/non-touch solution. Existing `K` assignments stay fixed;
-remaining solution cells use `place_cat()` and any safe residual non-solution
-unknowns use `block_cell()`. All other statuses produce no click plan. Autoplay
-inherits this behavior through `solve_analyzed_cats_board()` and still validates
-the complete final Board while excluding detected existing cats from new click
-targets.
+Row, column, and color singletons propagate to a fixed point. A branch assignment
+removes candidates sharing its row, column, color, or eight-neighbor area. MRV
+chooses the smallest remaining color group, then row, then column under explicit
+deterministic tie-breaks. Coordinates are tried row-major.
 
-## Solver module
+Search retains the first solution and continues until the tree is exhausted or a
+second distinct solution is found. The outcomes are:
 
-The solver is an application use case, not a collection of puzzle rules. It will
-coordinate repeated engine evaluations and propagation until the board is solved,
-stalled, contradictory, cancelled, or limited by policy.
+- `UNIQUE` — exactly one solution was proved and may be applied;
+- `UNSAT` — no complete solution exists;
+- `AMBIGUOUS` — at least two distinct solutions exist;
+- `LIMIT_REACHED` — the deterministic node budget ended before uniqueness proof.
 
-Solver iterations will mutate the one supplied `Board` through its narrow methods.
-Lifecycle and explanation metadata may record what changed, but must not duplicate
-the board matrix or create a board copy after every deduction. The Cats plugin's
-bounded exact fallback is an explicit deterministic strategy; probabilistic or
-first-solution guessing remains outside the v1.0 scope.
+The first found solution is insufficient because it does not distinguish a forced
+board from an arbitrary valid completion. Only `UNIQUE` can lead to clicks.
 
-## Plugin system
+## Validation and click planning
 
-`PuzzlePlugin` is the extension boundary for metadata, parser composition, and an
-ordered rule catalog. The planned registry will discover plugins through Python
-entry points and enforce identifier and framework-version compatibility.
+Complete-solution validation independently requires square board/color geometry,
+terminal cells, exactly one cat per row, column, and original color, non-touching
+cats, the correct total count, and exact equality between the click plan and all
+final cats minus detected existing cats.
 
-Plugins may:
+Cell centers remain in screenshot coordinates until click planning combines them
+with `WindowInfo.bounds`. Negative virtual-desktop coordinates are valid. Before
+each action phase, autoplay relocates the BlueStacks window and rejects moved
+bounds. Board fingerprints prevent reuse of stale analysis.
 
-- map visual evidence into the generic board model;
-- define plugin-owned metadata and region semantics;
-- contribute small stateless rules;
-- provide plugin-specific rendering assets through future contracts.
+Each new cat receives two left clicks with the configured delay. Existing cats
+are part of final validation but never appear in the new-click plan.
 
-Plugins may not invoke automation, mutate solver state, configure global logging,
-or require the core package to recognize their puzzle type.
+## Autoplay state machine
 
-## Explainability system
+The dependency-injected runner owns no OpenCV or Win32 construction. Its phases
+process:
 
-Explainability begins at the rule outcome, not after solving. Each proposed and
-applied transition retains a rule identifier, deduction kind, affected coordinates,
-summary, and future structured evidence. `Explanation` is presentation-neutral;
-formatters convert it to text, Markdown, JSON, or UI content.
+- `BOARD`: analyze, validate geometry, solve, validate the complete solution, and
+  optionally execute new-cat targets;
+- `RANKING`: click the accepted overlay action point when execution is enabled;
+- `LEVEL_COMPLETE`: advance through the accepted warm CTA;
+- `UNKNOWN`: wait without treating the frame as progress.
 
-The v0.6 design will add structured premises, conclusions, localization keys, and
-links between state transitions. A formatter must never invent evidence or rerun a
-rule to explain a historical result.
+Execute mode retries transient board, grid, color, existing-cat, and captured Cats
+geometry failures for a bounded three-second window, capturing a new frame every
+poll. This does not reset the independent 20-second no-progress timeout. Logical
+contradictions, incomplete/ambiguous solutions, mouse errors, capture errors, and
+screen-state errors are not converted into transient vision retries.
 
-## Composition and side effects
+## Testing strategy
 
-A future composition root will instantiate settings, adapters, plugin registry,
-engine, propagation strategy, and solver. Constructors will receive dependencies
-explicitly. Environment variables, file reads, image decoding, logs, clocks,
-rendering, and desktop input remain at the outer boundary.
+Synthetic fixtures cover multiple lattice sizes, occupied missing slots, corner
+color sampling, existing-cat evidence, screen transitions, warm CTA variants, rule
+behavior, exact-search outcomes, stale fingerprints, moved windows, negative
+coordinates, retry deadlines, click counts, and zero-click failure paths.
 
-Automation is intentionally separated from solving. It will require dry-run mode,
-screen and focus validation, rate limits, explicit user authorization, and an
-emergency stop before v0.7 can emit real input events.
-
-## Future roadmap
-
-- **v0.2:** extend screenshot interpretation beyond the implemented board locator.
-- **v0.3:** finalize the single mutable string-matrix board contract.
-- **v0.4:** implement deterministic engine and atomic propagation.
-- **v0.5:** implement Cats parsing, constraints, rules, and fixture corpus.
-- **v0.6:** add structured, localized, replayable explanations.
-- **v0.7:** add guarded automatic gameplay adapters.
-- **v1.0:** stabilize public contracts and Cats compatibility.
-- **Future:** add Sudoku, Nonogram, Kakuro, Hashi, and Nurikabe plugins without
-  changing puzzle-neutral core policies.
-
-Architectural decisions that change public contracts should be documented as an
-ADR under `docs/decisions/` before implementation.
+Architecture tests parse imports to enforce dependency direction and import every
+packaged module. Infrastructure behavior is tested through synthetic images and
+fakes; tests do not emit real desktop events.

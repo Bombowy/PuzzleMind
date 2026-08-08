@@ -256,7 +256,7 @@ def test_level_complete_output_contains_button_and_desktop_action(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Print detected button bounds and the translated future action point."""
+    """Print detected button bounds and the translated action point."""
 
     _configure(monkeypatch, state=CatsScreenState.LEVEL_COMPLETE)
 

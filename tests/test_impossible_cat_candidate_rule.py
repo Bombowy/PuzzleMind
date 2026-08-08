@@ -363,7 +363,7 @@ def test_candidates_are_examined_in_row_major_order(
 def test_first_of_two_impossible_candidates_is_blocked_row_major(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Leave the later impossible candidate for a future apply call."""
+    """Leave the later impossible candidate for another apply call."""
 
     board = _safe_latin_board()
 

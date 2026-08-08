@@ -1,68 +1,40 @@
-# Roadmap
+# LogicForge Roadmap
 
-The roadmap is capability-based. Version dates will be assigned only when the
-preceding milestone meets its acceptance criteria.
+The roadmap is capability-based. It avoids version promises until a concrete use
+case and acceptance tests justify a public contract.
 
-## v0.1 — Project architecture
+## Current
 
-- Establish package boundaries and dependency rules.
-- Define typed entities, value objects, ports, and plugin contracts.
-- Configure uv, Ruff, Black, MyPy, Pytest, packaging, and CI.
-- Publish contributor, architecture, governance, and roadmap documentation.
+- End-to-end Cats analysis, deterministic solving, validation, and autoplay from
+  a live BlueStacks window on Windows.
+- Classical OpenCV tile-lattice, LAB color, existing-cat, and transition-state
+  detection without OCR, templates, or ML.
+- Seven deterministic deduction rules plus uniqueness-proving exact constraint
+  search.
+- Explicit opt-in Win32 automation with stale-state, moved-window, retry, timeout,
+  and complete-solution guards.
+- Synthetic regression suite, strict typing, linting, formatting, coverage, locked
+  dependencies, CI, and reproducible package builds.
 
-## v0.2 — Screenshot parser
+## Next
 
-- Define typed parse results, diagnostics, and confidence semantics.
-- Implement screenshot loading plus public board and grid detector adapters.
-- Add puzzle-neutral deterministic cell-color classification.
-- Add anonymized screenshot fixtures and debug overlays.
-- Document supported formats, coordinate systems, and failure modes.
+- Publish an honest screen recording showing dry-run analysis and supervised live
+  autoplay, without adding private screenshots to the repository.
+- Grow a legally shareable, versioned fixture corpus for animation, theme, and
+  unusual board-layout regressions.
+- Improve operational observability with concise structured run summaries and
+  retained failure diagnostics that do not leak screenshot pixels by default.
+- Evaluate an additional capture or automation adapter only when a real platform
+  requirement is available for testing.
+- Stabilize the smallest useful application and plugin APIs before any 1.0 claim.
 
-## v0.3 — Board representation
+## Later
 
-- Finalize board invariants and validated construction.
-- Use one mutable `list[list[str]]` matrix without parallel state snapshots.
-- Define uncertain and incomplete observation semantics.
-- Add serialization and property-based domain tests.
-
-## v0.4 — Rule Engine
-
-- Implement deterministic rule scheduling and evaluation.
-- Define typed state-transition commands.
-- Implement atomic propagation and conflict handling.
-- Add traceability, limits, cancellation, and replay tests.
-
-## v0.5 — Cats Puzzle Solver
-
-- Implement the Cats screenshot parser.
-- Model Cats symbols and color-based constraints on the single board matrix.
-- Implement small, independently tested Cats rules.
-- Validate end-to-end solving against a versioned fixture corpus.
-
-## v0.6 — Explainable deductions
-
-- Add structured premises and conclusions to every transition.
-- Implement plain-text, Markdown, and JSON formatters.
-- Add replayable explanation chains and localization foundations.
-
-## v0.7 — Automatic gameplay
-
-- Implement dry-run mouse and keyboard adapters.
-- Add display scaling, focus, bounds, and rate-limit guards.
-- Require explicit authorization and an emergency stop.
-- Validate actions against screenshots after each interaction.
-
-## v1.0 — Stable Cats plugin
-
-- Stabilize the public plugin and solver APIs.
-- Publish compatibility and deprecation policies.
-- Meet documented performance, correctness, and explanation targets.
-- Ship a production-ready Cats plugin and user guide.
-
-## Future
-
-- Sudoku
-- Nonogram
-- Kakuro
-- Hashi
-- Nurikabe
+- Add another puzzle family and use it to identify genuinely shared plugin
+  contracts.
+- Add richer deduction explanations based on real rule transitions and exact-search
+  evidence.
+- Generalize plugin discovery only if a second independently shipped puzzle proves
+  that static composition roots are insufficient.
+- Consider broader platform support after window ownership, coordinate mapping,
+  and input-safety behavior can be tested on those platforms.

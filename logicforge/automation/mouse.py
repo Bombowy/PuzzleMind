@@ -6,11 +6,7 @@ from enum import StrEnum, auto
 
 
 class MouseButton(StrEnum):
-    """Identify portable pointer buttons supported by automation adapters.
-
-    TODO: Extend only when a supported game interaction requires another portable
-    button; adapter-specific controls must remain outside this shared enum.
-    """
+    """Identify portable pointer buttons supported by automation adapters."""
 
     LEFT = auto()
     RIGHT = auto()

@@ -52,7 +52,7 @@ def test_render_does_not_mutate_screenshot() -> None:
 
 
 def test_level_complete_draws_candidate_and_action_point() -> None:
-    """Annotate both the orange-button geometry and its exact future action."""
+    """Annotate both warm-CTA geometry and its exact detected action."""
 
     screenshot = synthetic_level_complete_screen()
     detection = OpenCvCatsScreenStateDetector().detect(screenshot)

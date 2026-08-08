@@ -9,7 +9,7 @@ type CellCoordinates = tuple[int, int]
 class ColorConfinedToLineRule:
     """Block other colors when one color's candidates share a single line.
 
-    The rule is stateless and independent from the future generic Rule Engine.
+    The rule is stateless and runs in the Cats fixed-point rule loop.
     Each call handles at most one color and one line, while one validated line may
     produce several atomic ``block_cell`` mutations on the sole Board matrix.
     """

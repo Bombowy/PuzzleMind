@@ -32,6 +32,6 @@ exceptions behind adapters. Avoid utility modules that combine unrelated behavio
 
 ## Logging and diagnostics
 
-Domain objects do not log. Future application services may receive a logger through
-an outer-layer factory. Expected failures will use typed results or exceptions;
-logs are operational evidence, not an API or error-handling mechanism.
+Core and plugin rule objects do not perform logging or I/O. Application and CLI
+layers print bounded operational summaries, while detectors return typed diagnostics
+and errors. Logs are evidence, not an API or a substitute for fail-closed handling.

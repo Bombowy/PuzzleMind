@@ -4,86 +4,119 @@
 [![Python 3.13](https://img.shields.io/badge/Python-3.13-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-LogicForge is a modular Computer Vision and rule-based deduction framework for
-solving logic puzzle games from screenshots. It is designed around typed vision
-results, one explicit mutable solver board, deterministic rules, explainable state
-transitions, and replaceable infrastructure adapters.
+**Deterministic Computer Vision + Constraint Solving Automation**
 
-> [!IMPORTANT]
-> LogicForge currently provides the architecture, in-memory BlueStacks capture,
-> classical puzzle-board localization, public grid/cell geometry extraction, and
-> puzzle-neutral LAB color classification. It does not yet recognize symbols,
-> parse puzzles, solve rules, or control input devices.
+LogicForge detects, solves, validates, and automatically plays live Cats puzzle
+boards inside a BlueStacks window. The current reference implementation combines
+classical OpenCV, deterministic deduction, uniqueness-proving constraint search,
+and guarded Win32 mouse automation in one end-to-end pipeline.
 
-## Architecture
+The vision path is scale-relative and works from detected cell geometry rather
+than hardcoded emulator coordinates or a single reference screenshot. It uses no
+OCR, template matching, or machine-learning model.
 
-LogicForge follows Clean Architecture: source dependencies point inward toward the
-puzzle-neutral core, while vision, file I/O, rendering, and operating-system
-automation remain behind explicit ports.
+## What works today
+
+- Live BlueStacks window discovery and immutable in-memory screenshot capture.
+- Classical OpenCV board, grid, color, occupied-cell, and screen-state analysis.
+- Cats-specific tile-lattice detection with independent row and column pitch
+  fitting, orthogonal support diagnostics, and missing slots for occupied cells.
+- Deterministic LAB color classification from four inset corner patches, resistant
+  to central cats, X marks, highlights, and animation sprites.
+- Existing-cat detection inside each `CellBounds`, with row, column, original-color,
+  and non-touching invariant validation.
+- One mutable logical `Board` using `C<n>`, `K`, and `X` states.
+- Seven ordered deterministic deduction rules followed, only when stalled, by
+  exact constraint search with singleton propagation and MRV branching.
+- Proof of solution uniqueness before any board clicks. `UNSAT`, `AMBIGUOUS`, and
+  search-limit outcomes fail closed.
+- Full terminal solution validation and exact click-plan equality checks.
+- Screenshot-to-desktop mapping through detected cell centers; existing cats are
+  excluded from new clicks.
+- Explicitly enabled Win32 double-click automation.
+- `BOARD`, `RANKING`, `LEVEL_COMPLETE`, and `UNKNOWN` transition state machine.
+- Bounded recovery from transient animation frames, stale-board fingerprints,
+  stationary overlays, and moved-window coordinates.
+
+## End-to-end pipeline
 
 ```mermaid
-flowchart LR
-    Input["Screenshot / image"] --> IO["I/O adapters"]
-    IO --> Vision["Vision pipeline"]
-    Vision --> Core["Mutable core board"]
-    Plugins["Puzzle plugins"] --> Vision
-    Plugins --> Rules["Rule contracts"]
-    Core --> Solver["Deduction solver"]
-    Rules --> Solver
-    Solver --> Explain["Explainability"]
-    Solver --> Visual["Visualization"]
-    Solver -. explicit opt-in .-> Auto["Automation adapters"]
+flowchart TD
+    Window[BlueStacks Window] --> Capture[Capture immutable Screenshot]
+    Capture --> State[Screen State Detection]
+    State -->|BOARD| Lattice[Cats Tile Lattice]
+    State -->|RANKING / LEVEL_COMPLETE| Transition[Transition State Machine]
+    State -->|UNKNOWN| Poll[Wait and capture a new frame]
+    Lattice --> Colors[LAB Color Classification]
+    Colors --> Existing[Existing Cat Detection]
+    Existing --> Board[Logical Board]
+    Board --> Rules[7 Deterministic Rules]
+    Rules --> Complete{Complete?}
+    Complete -->|yes| Validate[Full Solution Validation]
+    Complete -->|no, stalled| Search[Exact Constraint Search]
+    Search --> Unique{Proven UNIQUE?}
+    Unique -->|yes| Validate
+    Unique -->|UNSAT / AMBIGUOUS / LIMIT| Stop[Fail closed: zero clicks]
+    Validate --> Plan[Click Plan: final cats minus existing cats]
+    Plan --> Guard[Window and stale-coordinate guards]
+    Guard --> Mouse[Win32 Mouse]
+    Mouse --> Transition
+    Transition --> Capture
+    Poll --> Capture
 ```
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for dependency rules, data flow, module
-responsibilities, and extension guidance.
+## Deterministic solving
 
-## Planned features
+Rules are the preferred first-line solver. They run in a fixed order and restart
+from the highest-priority rule after every real mutation. Exact search is invoked
+only if this fixed-point loop stalls with unresolved cells.
 
-- Backend-neutral screenshot and image transport.
-- A replaceable board detector with deterministic diagnostics and confidence.
-- Public screenshot-space grid boundaries and immutable cell rectangles.
-- Deterministic LAB cell-color classes without hardcoded human color names.
-- A future symbol detector port without an implementation yet.
-- One mutable puzzle-neutral `list[list[str]]` board for future solver deductions.
-- Deterministic rule evaluation with atomic state propagation.
-- Auditable deductions and presentation-neutral explanations.
-- Plugin discovery for independently evolving puzzle families.
-- Debug rendering and safe, opt-in gameplay automation.
-- Strict static typing, reproducible environments, and automated quality checks.
+The fallback is deterministic constraint backtracking with propagation, not an
+unqualified first-solution brute force:
 
-## Roadmap
+- immutable `ColorDetectionResult.color_matrix` preserves original colors beneath
+  current `K` and `X` states;
+- existing `K` cells are fixed assignments;
+- row, column, and color singletons propagate before and after every branch;
+- MRV selects the smallest remaining color, row, or column candidate group;
+- branch coordinates are tried in row-major order;
+- the search continues after the first solution to look for a second one;
+- only one proven solution produces `UNIQUE` and may be applied to the real board.
 
-The initial milestones move from architecture to a stable Cats puzzle plugin:
+## Safety model
 
-| Version | Milestone |
-| --- | --- |
-| v0.1 | Project architecture |
-| v0.2 | Screenshot parser |
-| v0.3 | Board representation |
-| v0.4 | Rule Engine |
-| v0.5 | Cats Puzzle Solver |
-| v0.6 | Explainable deductions |
-| v0.7 | Automatic gameplay |
-| v1.0 | Stable Cats plugin |
+Automation is local and opt-in. Running the autoplay command without `--execute`
+performs one capture-and-analysis dry run and emits no input.
 
-The detailed scope and acceptance criteria live in [ROADMAP.md](ROADMAP.md).
+Before board clicks, LogicForge requires:
 
-## Planned puzzle plugins
+- a `COMPLETE` logical result;
+- terminal `K`/`X` state for every cell;
+- exactly one cat per row, column, and immutable original color;
+- no orthogonally or diagonally touching cats;
+- an exact, duplicate-free click plan equal to final cats minus existing cats;
+- unchanged window geometry and a non-stale board fingerprint.
 
-- **Cats** — the first reference plugin and v1.0 target.
-- **Sudoku** — number-placement rules and candidate propagation.
-- **Nonogram** — line-clue parsing and binary cell deductions.
-- **Kakuro** — sum constraints and candidate combinations.
-- **Hashi** — island detection and bridge constraints.
-- **Nurikabe** — region connectivity and wall constraints.
+Ambiguous, unsatisfiable, search-limited, contradictory, or incomplete states
+produce zero board clicks. A failed transient vision frame also produces zero
+clicks and is retried with a newly captured frame for a bounded window. Separate
+timeouts guard missing progress and stationary overlays. `Ctrl+C` stops the loop
+and prints a summary.
 
-Plugin names describe future direction, not currently available functionality.
+These guards reduce accidental input; they are not a general desktop security
+sandbox. Keep the intended BlueStacks window visible and supervise live runs.
 
-## Installation
+## Quick start
 
-LogicForge requires Python 3.13 and
-[`uv`](https://docs.astral.sh/uv/getting-started/installation/).
+### Requirements
+
+- Windows
+- Python 3.13
+- [`uv`](https://docs.astral.sh/uv/getting-started/installation/)
+- BlueStacks App Player
+- a Cats puzzle visible in the emulator
+
+Install the locked development environment:
 
 ```bash
 git clone https://github.com/Bombowy/PuzzleMind.git
@@ -91,126 +124,81 @@ cd PuzzleMind
 uv sync --locked --all-groups
 ```
 
-The committed lockfile gives local development and CI the same dependency graph.
-
-## BlueStacks window capture
-
-The Windows capture pipeline returns the visible BlueStacks App Player window as an
-immutable in-memory `numpy.ndarray` in BGR channel order:
+Dry run — one frame, no clicks:
 
 ```bash
+uv run python scripts/autoplay_bluestacks_cats.py
+```
+
+Conservative limited live test:
+
+```bash
+uv run python scripts/autoplay_bluestacks_cats.py \
+  --execute \
+  --click-delay-ms 300 \
+  --board-analysis-retry-seconds 3 \
+  --max-levels 3
+```
+
+Continuous example:
+
+```bash
+uv run python scripts/autoplay_bluestacks_cats.py \
+  --execute \
+  --click-delay-ms 300 \
+  --poll-interval-ms 100 \
+  --board-analysis-retry-seconds 3 \
+  --transition-timeout-seconds 20 \
+  --overlay-retry-ms 750 \
+  --max-overlay-retries 3 \
+  --new-board-delay-ms 300 \
+  --max-levels 0
+```
+
+The documented 300 ms click delay is a conservative operating example. The code
+default remains 10 ms.
+
+## Diagnostics
+
+Every diagnostic below captures a fresh frame and writes an artifact only through
+its explicit debug path. None performs mouse input.
+
+```bash
+# BlueStacks capture
 uv run python scripts/capture_bluestacks.py
-```
 
-BlueStacks must already be open, visible, and not minimized. The example script
-enables `debug=True`, so it additionally writes
-`artifacts/vision/bluestacks_capture.png` through OpenCV. Normal service calls use
-`debug=False` and perform no filesystem writes. The PNG is never reloaded into the
-pipeline. The capture command performs no board detection, parsing, or solving.
-
-## BlueStacks puzzle-board detection
-
-The OpenCV adapter consumes the captured in-memory `Screenshot`, evaluates
-scale-relative rectangular candidates, and returns a puzzle-neutral
-`BoardDetection`. To capture BlueStacks, detect the board, print diagnostics, and
-explicitly save an annotated overlay, run:
-
-```bash
+# Generic board and grid diagnostics
 uv run python scripts/detect_bluestacks_board.py
-```
-
-The overlay is written to `artifacts/vision/board_detection.png`. Calling the
-detector normally never writes files. A missing or unreliable board raises a typed
-`BoardDetectionError` with candidate diagnostics instead of returning guessed
-coordinates.
-
-Geometry alone is not sufficient for acceptance. Every plausible candidate ROI
-must contain regular horizontal and vertical separator evidence: enough distinct
-boundaries for at least a 3x3 grid, consistent spacing, substantial line coverage,
-and a minimum aggregate grid score. Confidence combines 40% geometric evidence
-with 60% grid evidence, while all grid conditions remain mandatory hard checks.
-The same internal analysis path is reused by the public `GridDetector`; separator
-detection is not duplicated.
-
-## Public grid and cell geometry
-
-The public OpenCV grid adapter converts `Screenshot + BoardDetection` into complete
-screenshot-space grid boundaries and immutable row-major `CellBounds` records:
-
-```bash
 uv run python scripts/detect_bluestacks_grid.py
+
+# Cats tile lattice, colors, existing cats, and screen state
+uv run python scripts/detect_bluestacks_cats_tile_grid.py
+uv run python scripts/detect_bluestacks_cats_colors.py
+uv run python scripts/detect_bluestacks_cats_existing_cats.py
+uv run python scripts/detect_bluestacks_cats_screen_state.py
+
+# One-shot Cats solve; add --execute-clicks only for explicit live input
+uv run python scripts/solve_bluestacks_cats.py
 ```
 
-The command saves an explicit debug overlay to
-`artifacts/vision/grid_detection.png`. Horizontal and vertical line tuples include
-the outer board boundaries. Cell rectangles use half-open pixel intervals: `x` and
-`y` are inclusive, while `x + width` and `y + height` are exclusive. Consequently,
-adjacent cells share boundaries without overlapping, and the complete cell set
-covers the board without gaps. Coordinates are relative to the captured screenshot,
-never the desktop or cropped ROI.
+Generated overlays live under `artifacts/vision/`, which is ignored by Git.
 
-Grid confidence is the shared grid-evidence score only; board confidence is not
-blended into it. Invalid boards, unreliable grids, collapsed rounded boundaries,
-or non-positive cells raise `GridDetectionError` without returning partial geometry.
-This grid stage does not recognize cell content and remains independently reusable
-by color and future symbol adapters.
+## Architecture
 
-## Puzzle-neutral cell-color detection
+The current production dependency flow is:
 
-`OpenCvColorDetector` consumes the existing in-memory `Screenshot` and public
-`GridDetection`. For every cell it samples the central 65% region, converts the BGR
-pixels to OpenCV LAB, rejects the most distant color outliers, and derives a robust
-representative with a median. It then performs deterministic complete-link
-clustering without assuming a palette or a fixed number of classes. Logical IDs
-such as `C0`, `C1`, and `C2` express only color equality; they are not human color
-names.
+```text
+scripts composition roots
+    -> application/cats orchestration
+        -> Cats plugin logic + core + backend-neutral ports
 
-Run the complete capture-to-color workflow with:
-
-```bash
-uv run python scripts/detect_bluestacks_colors.py
+infrastructure adapters implement the ports and are selected only by scripts
 ```
 
-The command prints the board bounds, grid dimensions, detected class count,
-row-major color matrix, and mean confidence. Explicit debug mode writes
-`artifacts/vision/color_detection.png` with the board, cell outlines, class labels,
-representative-color swatches, and global summary. Normal detector calls do not
-write files. The result is immutable and ready for a future parser/solver, but this
-milestone does not detect cats, X marks, other symbols, or puzzle rules.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for data ownership, layer boundaries, CV
+concepts, rule ordering, exact-search behavior, and automation state transitions.
 
-## Mutable logical board
-
-`Board(ColorDetectionResult)` copies the immutable detected `color_matrix` once
-into its only solver-facing representation: `cells: list[list[str]]`. Entries use
-`C0`, `C1`, ... while unresolved, `K` for a confirmed cat, and `X` for an excluded
-cell. `get`, `set_cat`, `set_blocked`, `is_unknown`, `is_cat`, and `is_blocked`
-operate directly on that matrix. The board does not create immutable snapshots,
-region objects, or a parallel state matrix after mutations. `K` and `X` are final:
-setting the same value again is idempotent, while `K -> X` or `X -> K` raises
-`BoardStateError` before any cell is changed.
-
-### Cats board actions
-
-The Cats plugin exposes two small operations over that same matrix. `place_cat()`
-changes one unresolved `C<n>` to `K`, then blocks every other unresolved cell of
-the same color, row, column, and eight-neighbor area. It first builds and validates
-the complete exclusion plan; an existing conflicting cat raises `BoardStateError`
-before any write, so no partial propagation remains. Repeating the same cat is an
-idempotent `False` result. `block_cell()` changes exactly one unresolved cell to
-`X` and deliberately triggers no additional propagation. Neither operation writes
-to `board.cells` directly or creates a second matrix, snapshot, rule, or solver.
-
-### Troubleshooting small BlueStacks windows
-
-If board or grid detection fails at a very small BlueStacks size, enlarge the
-emulator window and retry. A captured resolution of at least approximately
-440x470 is recommended. This is a practical operational recommendation, not a
-guaranteed universal minimum or a detector acceptance limit; detection is still
-attempted below this size.
-
-## Development
-
-Run all quality tools through `uv` so they use the managed environment:
+## Testing
 
 ```bash
 uv run black --check .
@@ -220,32 +208,27 @@ uv run pytest
 uv build
 ```
 
-Production code targets Python 3.13, uses type hints throughout, and is checked in
-strict MyPy mode. Refer to [CONTRIBUTING.md](CONTRIBUTING.md) for architectural and
-workflow requirements.
+Current local validation: **891 passed, 2 skipped, 91% coverage**. Tests use
+synthetic images and injected fakes; they do not require a live BlueStacks process,
+desktop focus, network access, or real mouse events.
 
-## Testing
+## Limitations
 
-```bash
-uv run pytest
-```
-
-The test suite validates architecture boundaries, immutable image transport,
-window ownership, synthetic board/grid detection, deterministic cell tiling,
-advertisement rejection, deterministic LAB color grouping, confidence bounds, and
-opt-in debug persistence. Tests never require a live BlueStacks process, desktop
-focus, monitor geometry, or
-network access.
+- Windows and BlueStacks are the current capture and automation adapters.
+- Cats is the only fully integrated puzzle family.
+- Emulator UI or theme changes may require screen-state detector recalibration.
+- Classical heuristics assume visually separable tile-lattice, color, and sprite
+  evidence.
+- Generic contour-first board/grid detection is retained for diagnostics and a
+  typed fallback, but arbitrary puzzle applications are not guaranteed.
+- Public APIs are pre-1.0 and may be refined as additional real use cases appear.
 
 ## Contributing
 
-Contributions are welcome. Before opening a pull request:
-
-1. Read [CONTRIBUTING.md](CONTRIBUTING.md) and [ARCHITECTURE.md](ARCHITECTURE.md).
-2. Keep puzzle-specific behavior inside a plugin.
-3. Add tests and documentation with every behavior change.
-4. Run Black, Ruff, MyPy, Pytest, and the package build locally.
-5. Follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+Read [CONTRIBUTING.md](CONTRIBUTING.md), [ARCHITECTURE.md](ARCHITECTURE.md), and the
+[plugin development guide](docs/plugin-development.md) before changing public
+contracts or puzzle behavior. Every change must preserve layer boundaries, add
+deterministic tests, and pass the complete local quality gate.
 
 ## License
 

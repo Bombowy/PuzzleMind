@@ -2,14 +2,16 @@
 
 from logicforge.config.settings import (
     BoardDetectionSettings,
+    CatsExistingCatDetectionSettings,
+    CatsTileGridDetectionSettings,
     ColorDetectionSettings,
     GridExtractionSettings,
-    LogicForgeSettings,
 )
 
 __all__ = [
     "BoardDetectionSettings",
+    "CatsExistingCatDetectionSettings",
+    "CatsTileGridDetectionSettings",
     "ColorDetectionSettings",
     "GridExtractionSettings",
-    "LogicForgeSettings",
 ]

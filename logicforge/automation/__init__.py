@@ -1,6 +1,5 @@
-"""Operating-system automation ports kept outside the solver domain."""
+"""Active operating-system automation ports kept outside puzzle policy."""
 
-from logicforge.automation.keyboard import KeyboardController
 from logicforge.automation.mouse import MouseController
 
-__all__ = ["KeyboardController", "MouseController"]
+__all__ = ["MouseController"]

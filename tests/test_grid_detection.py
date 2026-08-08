@@ -581,7 +581,7 @@ def test_rejects_cells_below_extraction_pixel_minimum() -> None:
 
 
 def test_cell_bounds_reject_zero_sized_geometry() -> None:
-    """Protect the public model even if a future adapter bypasses detector checks."""
+    """Protect the public model even if another adapter bypasses detector checks."""
 
     with pytest.raises(ValueError, match="positive"):
         CellBounds(

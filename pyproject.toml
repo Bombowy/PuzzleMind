@@ -5,13 +5,13 @@ build-backend = "uv_build"
 [project]
 name = "logicforge"
 version = "0.1.0"
-description = "A modular computer-vision and rule-based deduction framework for logic puzzle games."
+description = "Deterministic computer vision and constraint-solving automation for live Cats puzzle boards."
 readme = "README.md"
 requires-python = ">=3.13"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "LogicForge contributors" }]
-keywords = ["computer-vision", "logic-puzzles", "rule-engine", "solver"]
+keywords = ["computer-vision", "constraint-solving", "puzzle-automation", "opencv"]
 classifiers = [
   "Development Status :: 2 - Pre-Alpha",
   "Intended Audience :: Developers",

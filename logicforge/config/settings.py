@@ -1,8 +1,7 @@
-"""Dependency-free settings records for framework composition."""
+"""Typed settings for active vision and Cats detector adapters."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from math import isfinite
-from pathlib import Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -598,60 +597,3 @@ class ColorDetectionSettings:
             raise ValueError("Color confidence weights must be within 0.0 and 1.0.")
         if not abs(sum(weights) - 1.0) < 1e-9:
             raise ValueError("Color confidence weights must sum to 1.0.")
-
-
-@dataclass(frozen=True, slots=True)
-class VisionSettings:
-    """Hold typed puzzle-neutral configuration for vision adapters."""
-
-    debug_artifacts_directory: Path = Path("artifacts/vision")
-    board_detection: BoardDetectionSettings = field(
-        default_factory=BoardDetectionSettings
-    )
-    grid_extraction: GridExtractionSettings = field(
-        default_factory=GridExtractionSettings
-    )
-    color_detection: ColorDetectionSettings = field(
-        default_factory=ColorDetectionSettings
-    )
-    cats_existing_cat_detection: CatsExistingCatDetectionSettings = field(
-        default_factory=CatsExistingCatDetectionSettings
-    )
-
-
-@dataclass(frozen=True, slots=True)
-class SolverSettings:
-    """Hold safety limits for the reserved generic solver orchestration.
-
-    TODO: Add iteration and timeout limits in v0.4 together with explicit failure
-    results, cancellation behavior, and reproducibility guarantees.
-    """
-
-    explanations_enabled: bool = True
-
-
-@dataclass(frozen=True, slots=True)
-class LoggingSettings:
-    """Describe logging policy without configuring process-global state.
-
-    TODO: Add structured output, redaction, and correlation-id options when the
-    application composition layer introduces an operational logging adapter.
-    """
-
-    level: str = "INFO"
-
-
-@dataclass(frozen=True, slots=True)
-class LogicForgeSettings:
-    """Aggregate immutable settings passed through the composition root.
-
-    Nested settings keep subsystems independent and make future configuration
-    sources replaceable without making domain code aware of environment variables.
-
-    TODO: Add an external settings loader after precedence rules for files,
-    environment variables, and command-line options are documented and tested.
-    """
-
-    vision: VisionSettings = field(default_factory=VisionSettings)
-    solver: SolverSettings = field(default_factory=SolverSettings)
-    logging: LoggingSettings = field(default_factory=LoggingSettings)

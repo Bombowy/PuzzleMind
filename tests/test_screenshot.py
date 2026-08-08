@@ -34,7 +34,7 @@ def test_screenshot_owns_a_contiguous_read_only_bgr_copy() -> None:
 
 
 def test_screenshot_rejects_non_bgr_shape() -> None:
-    """Reject grayscale or mismatched data before future detector consumption."""
+    """Reject grayscale or mismatched data before detector consumption."""
 
     with pytest.raises(ValueError, match="exactly"):
         Screenshot(

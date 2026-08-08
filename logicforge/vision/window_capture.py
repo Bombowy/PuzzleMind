@@ -83,8 +83,7 @@ class WindowCapturer(ABC):
 class WindowCaptureService:
     """Orchestrate window lookup and rectangle capture without infrastructure APIs.
 
-    This application service is intentionally small: detector, parser, solver, and
-    automation responsibilities are outside this milestone and cannot enter here.
+    This service deliberately owns no detection, solving, or automation policy.
     """
 
     def __init__(

@@ -7,9 +7,9 @@ from logicforge.plugins.cats.board_actions import place_cat
 class SingleRemainingColorCellRule:
     """Place one forced cat in the numerically lowest singleton color class.
 
-    The rule is deliberately stateless and independent from the future generic
-    Rule Engine. One call scans only current ``C<n>`` entries and delegates at most
-    one real mutation to the atomic Cats ``place_cat`` action.
+    The rule is deliberately stateless and runs in the Cats fixed-point rule loop.
+    One call scans only current ``C<n>`` entries and delegates at most one real
+    mutation to the atomic Cats ``place_cat`` action.
     """
 
     __slots__ = ()

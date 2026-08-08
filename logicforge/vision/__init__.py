@@ -21,7 +21,6 @@ from logicforge.vision.grid_detector import (
     GridDetectionError,
     GridDetector,
 )
-from logicforge.vision.parser import PuzzleParser
 from logicforge.vision.screenshot import Screenshot
 from logicforge.vision.window_capture import (
     WindowBounds,
@@ -45,7 +44,6 @@ __all__ = [
     "GridDetectionDiagnostics",
     "GridDetectionError",
     "GridDetector",
-    "PuzzleParser",
     "Screenshot",
     "WindowBounds",
     "WindowCaptureService",

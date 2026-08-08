@@ -1,4 +1,4 @@
-"""Reserved architecture for the planned Cats puzzle plugin."""
+"""Public Cats rules, actions, exact search, and vision contracts."""
 
 from logicforge.plugins.cats.adjacent_color_pair_exclusion_rule import (
     AdjacentColorPairExclusionRule,
@@ -31,9 +31,7 @@ from logicforge.plugins.cats.impossible_cat_candidate_rule import (
 from logicforge.plugins.cats.monochromatic_line_color_exclusion_rule import (
     MonochromaticLineColorExclusionRule,
 )
-from logicforge.plugins.cats.parser import CatsParser
 from logicforge.plugins.cats.rule_loop import apply_cats_rules_until_stalled
-from logicforge.plugins.cats.rules import CatsRuleCatalog
 from logicforge.plugins.cats.screen_state import (
     CatsScreenPoint,
     CatsScreenRect,
@@ -67,8 +65,6 @@ __all__ = [
     "CatsExistingCatDetector",
     "CatsExistingCatDiagnostics",
     "CatsExistingCatObservation",
-    "CatsParser",
-    "CatsRuleCatalog",
     "CatsScreenPoint",
     "CatsScreenRect",
     "CatsScreenState",

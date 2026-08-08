@@ -18,7 +18,7 @@ class MssWindowCapturer(WindowCapturer):
     """Capture explicit window bounds as an in-memory BGR NumPy array.
 
     MSS exposes BGRA pixels. The alpha channel is discarded without color-channel
-    reordering, leaving the BGR layout expected by OpenCV and future detectors.
+    reordering, leaving the BGR layout expected by OpenCV detector adapters.
     This adapter performs no encoding, file creation, or disk I/O.
     """
 

@@ -1,18 +1,22 @@
 # LogicForge documentation
 
-LogicForge is currently an architecture-only framework. No screenshot parser,
-solver, puzzle rule, or desktop automation implementation is available yet.
+LogicForge is a working deterministic computer-vision, constraint-solving, and
+desktop-automation system. Cats running in BlueStacks on Windows is the current
+fully integrated reference implementation.
 
 ## Documentation map
 
-- [Project overview](../README.md)
-- [Architecture](../ARCHITECTURE.md)
-- [Roadmap](../ROADMAP.md)
+- [Project overview and quick start](../README.md)
+- [Current architecture](../ARCHITECTURE.md)
+- [Capability roadmap](../ROADMAP.md)
 - [Development guide](development.md)
-- [Plugin development guide](plugin-development.md)
-- [Architecture decisions](decisions/README.md)
+- [Cats plugin development guide](plugin-development.md)
+- [Executable and diagnostic workflows](../examples/README.md)
 - [Contributing](../CONTRIBUTING.md)
 - [Security policy](../SECURITY.md)
+- [Changelog](../CHANGELOG.md)
+- [Architecture decision records](decisions/README.md)
 
-Documentation evolves with public contracts. Examples must identify whether they
-are executable or conceptual; v0.1 provides conceptual composition guidance only.
+The source and tests are authoritative for calibrated thresholds and exact runtime
+behavior. Public documentation explains responsibilities and invariants without
+duplicating every detector setting.

@@ -499,7 +499,7 @@ def test_invalid_value_in_exclusion_plan_rejects_before_any_mutation() -> None:
 
 
 def test_block_cell_changes_unknown_to_x_and_returns_true() -> None:
-    """Provide future rules one non-propagating C<n> to X operation."""
+    """Provide rules one non-propagating C<n> to X operation."""
 
     board = _board()
 
@@ -510,7 +510,7 @@ def test_block_cell_changes_unknown_to_x_and_returns_true() -> None:
 
 
 def test_block_cell_on_x_is_idempotent_and_returns_false() -> None:
-    """Report no change when a future rule repeats the same exclusion."""
+    """Report no change when a rule repeats the same exclusion."""
 
     board = _board()
     block_cell(board, 2, 3)
