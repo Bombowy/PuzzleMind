@@ -24,6 +24,7 @@ dependencies = [
   "numpy>=2.3.0,<3",
   "opencv-python-headless>=4.13.0.92,<6",
   "pywin32>=312,<313; sys_platform == 'win32'",
+  "qrcode[pil]>=8.2",
 ]
 
 [project.urls]
