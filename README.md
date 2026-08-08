@@ -1,6 +1,6 @@
 # LogicForge
 
-[![CI](https://github.com/Bombowy/PuzzleMind/actions/workflows/ci.yml/badge.svg)](https://github.com/Bombowy/PuzzleMind/actions/workflows/ci.yml)
+[![CI](https://github.com/Bombowy/PuzzleMind/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/Bombowy/PuzzleMind/actions/workflows/ci.yml)
 [![Python 3.13](https://img.shields.io/badge/Python-3.13-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
